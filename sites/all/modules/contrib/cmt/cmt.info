@@ -1,0 +1,8 @@
+name = Community-managed Taxonomy
+package = Taxonomy
+description = "With CMT, users can collaborate to add, order, and merge taxonomy terms for each node, create structured vocabularies on the fly, and more."
+dependencies[] = field
+dependencies[] = field_ui
+dependencies[] = taxonomy
+dependencies[] = votingapi
+core = 7.x

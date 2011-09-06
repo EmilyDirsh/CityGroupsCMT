@@ -1,0 +1,309 @@
+<?php
+// $Id
+
+/**
+ * Implementation of hook_install().
+ *
+ * Database schema last updated 2007-07 by Benjamin Melanon.
+ *
+ *   cmt_vocabulary   (I think naming convention is singular)
+ *     vid : vocabulary ID
+ *     enabled : toggle switch that allows community managing to be turned off, without deleting thresholds
+ *     description_th : voting threshold for term description
+ *     weight_th : voting threshold for term weight
+ *     name_th : voting threshold for term name
+ *     hierarchy_th : voting threshold for term placement
+ *     merge_th : voting threshold for term 
+ *     node_th : voting threshold for 
+ *          thresholds for above will be measured as 0, 1, and 2 (none, low, and high)
+ *     related_th : this one is different.  It gives the option to have a threshold to interpret votes for merging (cmt_term_merge) as votes for making related terms (negative values turn this feature off).  This value must be less than the value of merge_th for anything to happen
+ *
+ *   cmt_term_vocab (so we can delete records when deleting a vocab)
+ *     vid
+ *     tid
+ *
+ *   cmt_term_data  -- a FAKE table which holds results based on votes on others
+ *     tid
+ *     name
+ *     weight
+ *
+ *   cmt_term_description
+ *     content_id : (which I called vapi_id) corresponds to votingapi content_id
+ *     tid : same as in term_data
+ *     description : same as in term_data.  Don't see a reason to put a key on description
+ *     vote : current vote value for this tid, description combination provided by votingapi
+ *
+ *   cmt_term_weight
+ *     content_id : (which I called vapi_id) corresponds to votingapi content_id
+ *     tid : same as in term_data
+ *     weight : same as in term_data
+ *     vote : current vote value
+ *
+ *   name inserted into synonym-modeled table cmt_term_name, where votes for names/synonyms are tracked
+ *                      
+ *   cmt_term_name (based on term_synonym table)
+ *     content_id
+ *     tid
+ *     name
+ *     vote
+ *
+ *   cmt_term_hierarchy
+ *     content_id : corresponds to votingapi content_id
+ *     tid : same as in term_hierarchy
+ *     parent : same as in term_hierarchy
+ *     vote
+ *
+ *   cmt_term_merge
+ *     content_id : key for votingapi content_id
+ *     tid1 : term, that gets to keep its name and info, to merge onto tid2
+ *     tid2 : term, that subsumes its name and info, to merge into tid1
+ *     vote
+ *   -- I will not be able to resist deriving related terms from this
+ *
+ *   cmt_term_node
+ *     content_id
+ *     nid
+ *     tid
+ *     vote
+ *   
+ */
+
+function cmt_install() {
+  switch ($GLOBALS['db_type']) {
+    case 'mysql':
+    case 'mysqli':
+      db_query("CREATE TABLE {cmt_vocabulary} (
+        vid int unsigned NOT NULL DEFAULT '0',
+        cmt_enabled tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_description_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_weight_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_name_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_hierarchy_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_merge_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_node_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_related_th tinyint unsigned NOT NULL DEFAULT '0',
+        KEY (cmt_enabled),
+        PRIMARY KEY (vid)
+        ) /*!40100 DEFAULT CHARACTER SET UTF8 */ 
+      ");
+      db_query("CREATE TABLE {cmt_term_vocab} (
+        vid int(10) unsigned NOT NULL DEFAULT '0',
+        tid int(10) unsigned NOT NULL DEFAULT '0',
+        KEY (vid),
+        PRIMARY KEY (tid, vid)
+        ) /*!40100 DEFAULT CHARACTER SET UTF8 */
+      ");      
+      // denormalized table
+      db_query("CREATE TABLE {cmt_term_data} (
+        tid int(10) unsigned NOT NULL auto_increment,
+        name varchar(255) NOT NULL DEFAULT '',
+        weight tinyint NOT NULL DEFAULT '0',
+        PRIMARY KEY (tid)
+        ) /*!40100 DEFAULT CHARACTER SET UTF8 */
+      ");
+      db_query("CREATE TABLE {cmt_term_description} (
+        content_id int(10) unsigned NOT NULL auto_increment,
+        tid int(10) unsigned NOT NULL,
+        description longtext,
+        vote float(10) default NULL,
+        KEY (tid),
+        KEY (description(25)),
+        KEY (vote),
+        PRIMARY KEY (content_id)
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */
+     ");  // # no can do: UNIQUE KEY (tid, description)    
+      db_query("CREATE TABLE {cmt_term_weight} (
+        content_id int(10) unsigned NOT NULL auto_increment,
+        tid int(10) unsigned NOT NULL DEFAULT '0',
+        weight tinyint NOT NULL DEFAULT '0',
+        vote float(10) default NULL,
+        KEY (tid),
+        KEY (weight),
+        KEY (vote),
+        UNIQUE KEY (tid, weight),
+        PRIMARY KEY (content_id)
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */ ");
+      db_query("CREATE TABLE {cmt_term_name} (
+        content_id int(10) unsigned NOT NULL auto_increment,
+        tid int unsigned NOT NULL DEFAULT '0',
+        name varchar(255) NOT NULL DEFAULT '',
+        vote float(10) default NULL,
+        KEY tid (tid),
+        KEY name (name(3)),
+        KEY (vote),
+        PRIMARY KEY (content_id)
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */ ");
+      db_query("CREATE TABLE {cmt_term_hierarchy} (
+        content_id int(10) unsigned NOT NULL auto_increment,
+        tid int(10) unsigned NOT NULL DEFAULT '0',
+        parent int unsigned NOT NULL DEFAULT '0',
+        vote float(10) default NULL,
+        KEY tid (tid),
+        KEY parent (parent),
+        KEY (vote),
+        UNIQUE KEY (tid, parent), 
+        PRIMARY KEY (content_id)
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */ ");
+      db_query("CREATE TABLE {cmt_term_merge} (
+        content_id int(10) unsigned NOT NULL auto_increment,
+        tid1 int unsigned NOT NULL DEFAULT '0',
+        tid2 int unsigned NOT NULL DEFAULT '0',
+        vote float(10) default NULL,
+        KEY tid1 (tid1),
+        KEY tid2 (tid2),
+        KEY (vote),
+        UNIQUE KEY (tid1, tid2),          
+        PRIMARY KEY (content_id)
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */ ");
+      db_query("CREATE TABLE {cmt_term_node} (
+        content_id int(10) unsigned NOT NULL auto_increment,
+        nid int unsigned NOT NULL DEFAULT '0',
+        tid int unsigned NOT NULL DEFAULT '0',
+        vote float(10) default NULL,
+        KEY nid (nid),
+        KEY tid (tid),
+        KEY (vote),
+        UNIQUE KEY (tid, nid),
+        PRIMARY KEY (content_id)
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */ ");
+      
+/* 
+// We need to provide data for the root term
+// to have it show up in our hierarchy ladders 
+INSERT INTO `joe_cmt_term_data` ( `tid` , `name` , `weight` )
+VALUES (
+'0', '<root>', '0'
+);
+// this didn't seem to work for me the first time
+// had to run UPDATE `joe_cmt_term_data` SET `tid` = '0' WHERE `tid` =15 LIMIT 1 ;
+// very strange
+Should do same in term_name ... ?
+*/
+      
+      break;
+
+    case 'pgsql':
+      /* this relies on create unsigned types done in system.install */
+      /* NOTE: PostgreSQL compatibility has not been tested, and it needs a (partial) index on cmt_term_description's description text column */
+      // pgsql IS CURRENTLY OUT OF DATE.  Needs vote key for vote column
+      // Missing a few other keys too, I think
+
+      db_query("CREATE TABLE {cmt_vocabulary} (
+        vid int unsigned NOT NULL DEFAULT '0',
+        cmt_enabled tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_description_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_weight_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_name_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_hierarchy_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_merge_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_node_th tinyint unsigned NOT NULL DEFAULT '1',
+        cmt_related_th tinyint unsigned NOT NULL DEFAULT '0',
+        KEY (cmt_enabled),
+        PRIMARY KEY (vid)
+      )");
+
+      db_query("CREATE TABLE {cmt_term_vocab} (
+        vid int_unsigned NOT NULL DEFAULT '0',
+        tid int_unsigned NOT NULL DEFAULT '0'
+        )");
+
+      db_query("CREATE TABLE {cmt_term_data} (
+        tid serial CHECK (tid >= 0),
+        name varchar(255) NOT NULL DEFAULT '',
+        weight tinyint NOT NULL DEFAULT '0',
+        /*!40100 DEFAULT CHARACTER SET UTF8 */
+      ");
+
+      db_query("CREATE TABLE {cmt_term_description} (
+        content_id serial CHECK (content_id >= 0),
+        tid int_unsigned NOT NULL,
+        description text,
+        vote float(10) default NULL,
+        PRIMARY KEY (content_id)  
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */ ");  // @TODO check index on description, prefix needed
+      db_query("CREATE INDEX {cmt_term_description}_content_id_idx ON {cmt_term_description} (content_id)");
+      db_query("CREATE INDEX {cmt_term_description}_content_id_idx ON {cmt_term_description} (content_id)");
+      
+      db_query("CREATE TABLE {cmt_term_hierarchy} (
+        content_id serial CHECK (content_id >= 0),
+        tid int_unsigned NOT NULL default '0',
+        parent int_unsigned NOT NULL default '0',
+        vote float(10) default NULL,
+        UNIQUE (tid, parent),
+        PRIMARY KEY (content_id)
+      )");
+      db_query("CREATE INDEX {cmt_term_hierarchy}_tid_idx ON {cmt_term_hierarchy} (tid)");
+      db_query("CREATE INDEX {cmt_term_hierarchy}_parent_idx ON {cmt_term_hierarchy} (parent)");
+      db_query("CREATE INDEX {cmt_term_hierarchy}_content_id_idx ON {cmt_term_hierarchy} (content_id)");
+
+      db_query("CREATE TABLE {cmt_term_merge} (
+        content_id serial CHECK (content_id >= 0),
+        tid1 int_unsigned NOT NULL default '0',
+        tid2 int_unsigned NOT NULL default '0'
+        vote float(10) default NULL,
+        UNIQUE (tid1, tid2),
+        PRIMARY KEY (content_id)
+      )");
+      db_query("CREATE INDEX {cmt_term_merge}_tid1_idx ON {cmt_term_merge} (tid1)");
+      db_query("CREATE INDEX {cmt_term_merge}_tid2_idx ON {cmt_term_merge} (tid2)");
+
+      db_query("CREATE TABLE {cmt_term_node} (
+        content_id serial CHECK (content_id >= 0),
+        nid int_unsigned NOT NULL default '0',
+        tid int_unsigned NOT NULL default '0',
+        vote float(10) default NULL,
+        UNIQUE (nid, tid),
+        PRIMARY KEY (content_id)
+      )");
+      db_query("CREATE INDEX {term_node}_nid_idx ON {term_node} (nid)");
+      db_query("CREATE INDEX {term_node}_tid_idx ON {term_node} (tid)");
+
+      db_query("CREATE TABLE {cmt_term_name} (
+        content_id serial CHECK (content_id >= 0),
+        tid int_unsigned NOT NULL default '0',
+        name varchar(255) NOT NULL default '',
+        vote float(10) default NULL,
+        PRIMARY KEY (content_id)
+      )");
+      db_query("CREATE INDEX {cmt_term_name}_tid_idx ON {cmt_term_name} (tid)");
+      db_query("CREATE INDEX {cmt_term_name}_name_idx ON {cmt_term_name} (substr(name, 1, 3))");
+      break;
+    default:
+      return drupal_set_message(t('Database type @type not supported', array('@type' => $GLOBALS['db_type'])), 'error');
+  }
+}
+
+
+/* update example:
+function cmt_update_20() {
+  $ret = array();
+
+  switch ($GLOBALS['db_type']) {
+    case 'mysql':
+    case 'mysqli':
+      $ret[] = update_sql("UPDATE {node} SET type = 'casetracker_basic_project' WHERE type = 'casetracker_project'");
+      $ret[] = update_sql("UPDATE {node} SET type = 'casetracker_basic_case' WHERE type = 'casetracker_case'");
+      break;
+  }
+
+  return $ret;
+}
+*/
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function cmt_uninstall() {
+  db_query('DROP TABLE {cmt_term_description}');
+  db_query('DROP TABLE {cmt_term_weight}');
+  db_query('DROP TABLE {cmt_term_name}');
+  db_query('DROP TABLE {cmt_term_hierarchy}');
+  db_query('DROP TABLE {cmt_term_merge}');
+  db_query('DROP TABLE {cmt_term_node}');
+  db_query('DROP TABLE {cmt_term_data}');
+  db_query('DROP TABLE {cmt_term_vocab}');
+  db_query('DROP TABLE {cmt_vocabulary}');
+  // usual won't work: variable_del('cmt_example_variable');
+  db_query("DELETE FROM {variable} WHERE name LIKE 'cmt_teaser_%'");
+  cache_clear_all('variables', 'cache'); 
+}

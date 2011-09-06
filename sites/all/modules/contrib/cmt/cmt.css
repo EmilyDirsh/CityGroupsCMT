@@ -1,0 +1,11 @@
+
+h4 {
+  margin-bottom: 0;
+}
+
+/* for our block, we need to hide the "Case number" label (which has to be  */
+/* there if we want a useful "[field] is required" error message). however, */
+/* this attribute selector doesn't work in IE6. Tough patooka's, eh?        */
+#casetracker-block-jump-to-case-number label[for="edit-case-number"] {
+  display:          none;
+}

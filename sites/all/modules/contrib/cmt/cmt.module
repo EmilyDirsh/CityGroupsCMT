@@ -1,0 +1,1221 @@
+<?php
+/**
+ * @file
+ * Community-managed taxonomy enables users to collaborate on categorization decisions.
+ */
+
+// include admin functions; look up if there's a Drupal-standard way to prevent this from loading unless it needs to
+include_once './'. drupal_get_path('module', 'cmt') .'/cmt_admin.inc';
+
+/**
+ * Implementation of hook_perm().
+ */
+function cmt_perm() {
+  return array(
+    'access community managed taxonomy',  // aka manage community categories
+    'administer community managed taxonomy',
+  );
+}
+
+/**
+ * Implementation of hook_menu().
+ */
+function cmt_menu($may_cache) {
+  $items = array();
+  if ($may_cache) {
+    /* -- administrative menu items ----------------------------------------- */
+    $items[] = array(
+      'access'             => user_access('administer community managed taxonomy'),
+      'callback'           => 'cmt_overview_vocabularies',
+      'description'        => t('Edit settings for community-managed vocabularies (taxonomy enhanced by the cmt module).'),
+      'path'               => 'admin/content/cmt',
+      'title'              => t('Community-managed Categories'),
+    );
+    $items[] = array(
+      'access'             => user_access('administer community managed taxonomy'),
+      'path'               => 'admin/content/cmt/list',
+      // optional? 'callback'           => 'cmt_overview_vocabularies',
+      'type'               => MENU_DEFAULT_LOCAL_TASK,
+      'title'              => t('List vocabularies'),
+      'weight'             => -10,
+    );
+    $items[] = array(
+      'path' => 'admin/content/cmt/edit/vocabulary',
+      'title' => t('Edit community-managed vocabulary'),
+      'callback' => 'cmt_admin_vocabulary_edit',
+      'access' => user_access('administer community managed taxonomy'),
+      'type' => MENU_CALLBACK,
+    );
+    $items[] = array(
+      'access'             => user_access('administer community managed taxonomy'),
+      'callback'           => 'drupal_get_form',
+      'callback arguments' => array('cmt_settings_form'),
+      'description'        => t('Configure Community-managed Taxonomy options that apply to all vocabularies with these settings.'),
+      'path'               => 'admin/content/cmt/settings',
+      'title'              => t('Settings'),
+      'type'               => MENU_LOCAL_TASK,
+    );
+    /* -- other menu items ---------------------------------------------- */
+    $items[] = array(
+      'access'             => user_access('access community managed taxonomy'),
+      'callback'           => 'cmt_autocomplete',
+      'path'               => 'cmt/autocomplete',
+      'title'              => t('Community-managed taxonomy autocomplete'),
+      'type'               => MENU_CALLBACK,
+    );
+  }
+  else {  // no cache
+  /*  ADD later from community_tags ?
+  global $user;
+   */
+  }
+  return $items;
+}
+
+/**
+ * Implementation of hook_form_alter().
+ *
+ * An important hook for CMT.
+ * First, to add vocabularies to community management by making it an option
+ * on the create and edit vocabulary forms.
+ */
+function cmt_form_alter($form_id, &$form) {
+  // these if statements should be reworked as a switch statement?
+  if ($form_id == 'taxonomy_form_vocabulary') {
+    if (!$form['vid']['#value'] || !cmt_is_vid_cmt($form['vid']['#value'])) {
+      $cmt_vocabulary['cmt_vocabulary'] = array(
+        '#type' => 'radios',
+        '#title' => t('Community management'),
+        '#default_value' => 0,
+        '#options' => array(
+          0 => t('Disabled'),
+          1 => t('No threshold'),
+          2 => t('Default threshold'),
+          3 => t('Default threshold (with related terms derived)'),
+          4 => t('High threshold (with related terms derived)'), 
+        ),
+      '#description' => t('Allows <a href="@help-url">community managing</a> of terms in this vocabulary.  Users can influence both what terms nodes are tagged with and how these terms are themselves organized, named, and described.', array('@help-url' => url('admin/help/cmt'))),
+      );
+    }
+    else {
+      $cmt_vocabulary['cmt_vocabulary'] = array(
+        '#type' => 'markup',
+        '#title' => t('Community management'),
+        '#value' => '<h2>' .  t('Community management:') . '</h2> <div>' . t('This vocabulary is open to <a href="@help-url">community managing</a> of its terms.  Users can influence both what terms nodes are tagged with and how these terms are themselves organized, named, and described.  To edit community-management settings for this vocabulary (including disabling it) please see its <a href="@cmtsettings">Community managed Categories administration page</a>.', array('@help-url' => url('admin/help/cmt'), '@cmtsettings' => url('admin/content/cmt/edit/vocabulary/' . $form['vid']['#value']))) . '</div>',
+      );
+    }
+    $pos = array_search('submit', array_keys($form));
+    $form = array_merge(array_slice($form, 0, $pos), $cmt_vocabulary, array_slice($form, $pos));
+  }
+  elseif ($form_id == 'taxonomy_vocabulary_confirm_delete') {
+    $form['cmt_delete'] = array(
+      '#type' => 'markup',
+      '#value' => '<div>' . t('<em>Deleting the community-managed vocabulary</em> @name <em>will also delete all community suggestions and choices about term position and information that was associated with it.</em>', array('@name' => $form['name']['#value'])) . '</div>',
+      '#weight' => 10,
+    );
+    $form['actions']['#weight'] = 11;
+  }
+  elseif ($form_id == 'node_type_form' && in_array($type = $form['#node_type']->type, cmt_node_types())) {
+    $form_add = array();  // addition to node_type_form
+    $form_add['cmt'] = array(
+      '#title' => t('Community-Managed Taxonomy (CMT)'),
+      '#type' => 'fieldset',
+      '#collapsible'   => TRUE,
+      '#collapsed'     => FALSE,
+    );
+    $form_add['cmt']['cmt_teaser'] = array(
+      '#type' => 'radios',
+      '#title' => 'Display term managing',
+      '#options' => array(
+        1 => t('Show form on teasers and full content.'),
+        0 => t('Show form on full content only'),
+      ),
+      '#default_value' => variable_get('cmt_teaser_' . $type . '_teaser', 0),
+      '#description' => t('CMT forms can become large and complex, so displaying them on the teaser is usually not recommended.'),
+    );
+    // provide a submit handler.  Do not put ['cmt'] fieldset here, won't work
+    $form_add['#submit']['cmt_node_type_form_submit'] = array();
+    // add the option before the buttons
+    $pos = array_search('submit', array_keys($form));
+    $form = array_merge(array_slice($form, 0, $pos), $form_add, array_slice($form, $pos));
+  }
+}
+
+/**
+ * Implementation of hook_taxonomy()
+ *
+ * This could be moved to an admin-only section that is loaded for *every*
+ * administration page.  It stays here until that is determined.
+ */
+function cmt_taxonomy($op, $type, $array) {
+  switch ($type) {
+    case 'vocabulary':
+      // we're only interested if it's newly community-managed
+      if ($array['cmt_vocabulary']) {
+        // would it be good, bad, or neutral practice to put this line in the if condition?
+        // initial threshold key, making 'reset' feature possible.  Not after disabling though.
+        $array['cmt_enabled'] = $array['cmt_vocabulary']['#value'];
+        // we would require_once('cmt_admin.inc') here but you can't require functions inside a function.  So right now we save no bandwidth, but we get the admin stuff out of MY way
+        // this file assigns default thresholds directly to the $array variable:
+        require_once('default_thresholds.inc');
+        $msg_end = t('You may want to review its <a href="@cmtsettings">community-management settings</a>.', array('@cmtsettings' => url('admin/content/cmt/edit/vocabulary/' . $array['vid'])));
+        switch($op) {
+          case 'update':
+            if (!cmt_is_vid_cmt($array['vid']))  $op = 'insert';
+            if (cmt_save_vocabulary($array, $op)) {
+              $msg = t('The vocabulary %name is now community-managed.  ', array('%name' => $array['name']));           
+              drupal_set_message($msg . $msg_end);
+            }
+            else  drupal_set_message('<strong>Making this vocabulary community-managed failed somehow.</strong>');
+            break;
+          case 'insert':
+            $msg = t('Your new vocabulary is community-managed.  ');
+            if (cmt_save_vocabulary($array, $op)) {    
+              drupal_set_message($msg . $msg_end);
+            }
+            else drupal_set_message('<strong>Making your new vocabulary community-managed failed somehow.</strong>');
+            break;
+          case 'delete':
+            if (_cmt_del_vocabulary($array['vid'])) {
+              // there's no reason to say 'you just deleted a CMT' - drupal_set_message('');
+              // we do insert an extra notice in the delete confirmation form
+            }
+          break;
+       }  // end switch on op
+      break;
+    }  // end if cmt_vocabulary set
+  }  // end switch on type
+}
+
+/**
+ * Implementation of hook_nodeapi().
+ */
+function cmt_nodeapi(&$node, $op, $teaser = NULL, $page = NULL) {
+  switch ($op) {
+
+   case 'insert':
+   case 'update':
+      // Form alter to remove the community managed taxonomy vocabularies from the edit form?
+     break;
+
+    case 'load':
+ // I don't think I want to put any data in the node load--- 
+ // if some other module wants community tags information
+ // we'll have a function for that
+ // Therefore we shall save all logic for node view
+ /*
+    // modeled on community_tags
+    // compare cmt_node_form_display option with inline constant, store TRUE if match
+      $node->cmt_node_form_display = variable_get('cmt_node_form_display', CMT_NODE_FORM_INLINE) == CMT_NODE_FORM_INLINE;
+ */
+      break;
+
+    case 'view':
+  /* for deciding which nodes we even have to mess with, we have two options:
+  *   1. use an array of node->types affected by CMT vocabularies saved as a variable
+        if (in_array($node->type, variable_get('casetracker_case_node_types', array('casetracker_basic_case')), TRUE)) {
+        }
+  *   2. select directly from the cmt_vocabularies and vocabulary_node_types tables
+        vocabulary_node_types: vid, type
+        we'll go with the second version, outsourced to a static variable function,
+        cmt_node_types
+  */   
+      if (in_array($node->type, cmt_node_types()) && ($page || ($teaser && variable_get('cmt_teaser_' . $node->type, 0)))) {
+        $node->content['cmt_terms'] = array(
+          '#value' => cmt_terms_node_view($node, TRUE),
+          '#weight' => 15,
+        );
+      }     
+      break;
+  }
+}
+
+/**
+ *  List all node types affected by any CMT vocabulary.
+ */
+function cmt_node_types($names = NULL) {
+  static $cmt_node_types, $cmt_node_types_names;
+  if (!$cmt_node_types) {
+    $result = db_query('SELECT DISTINCT(v.type) AS type FROM {cmt_vocabulary} c LEFT JOIN {vocabulary_node_types} v ON c.vid = v.vid WHERE c.cmt_enabled = 1');
+    $cmt_node_types = array();
+    while ($data = db_fetch_object($result)) {
+      $cmt_node_types[] = $data->type;
+    }   
+  }
+  if ($names == 'names' && !$cmt_node_types_names) {
+    $all_node_types = node_get_types('names');
+    foreach ($all_node_types AS $node_type => $node_type_name) {
+      if (!in_array($node_type, $cmt_node_types))  unset($all_node_types[$node_type]);
+    }
+    $cmt_node_types_names = $all_node_types;
+    return $cmt_node_types_names;
+  }
+  return $cmt_node_types;
+}
+
+/**
+ *  Delete all CMT information associated with a node.
+ *
+ *  @param nid
+ *    The nid of the node that is being deleted.
+ */
+function cmt_node_delete($nid) {
+  db_query('DELETE FROM {cmt_term_node} AS t, {votingapi_vote} AS v, {votingapi_cache} AS c USING v LEFT JOIN c LEFT JOIN t WHERE v.content_id = c.content_id AND c.content_id = t.content_id AND c.content_type = "cmt_term" AND nid = %d', $nid);
+}
+
+/**
+ * Find all exposed community-managed terms associated with the given node,
+ * ordered by vocabulary and term weight.
+ *
+ * Like taxonomy_node_get_terms, but for cmt vocabs only.
+ * This loads ONLY exposed terms, not suggested cmt terms (aka official not proposed)
+ */
+function cmt_taxonomy_node_get_terms($nid, $key = 'tid') {
+  // this is all encased in a function and so will be happily inefficient for now
+  $cmt_taxonomy_terms = array();
+  // taxonomy_node_get_terms should already be loaded, so we'll just use it
+  $terms = taxonomy_node_get_terms($nid);
+  $cmt_vocab_ids = array_keys(cmt_get_vocabularies_by_node($nid));
+  // in_array could be replaced by cmt_is_vid_cmt, but this may be more efficient
+  $c = count($terms);
+  // for($i=0;$i<$c;$i++) - won't work- terms key is tid
+  foreach($terms as $term) {
+    if (in_array($term->vid, $cmt_vocab_ids)) {
+      $cmt_taxonomy_terms[$term->$key] = $term;
+    }
+  }
+  return $cmt_taxonomy_terms;
+}
+
+/*
+ * Find all community-managed terms associated with the given node, ordered by
+ * vocabulary and term weight.
+ *
+ * Both exposed (official taxonomy) and proposed (below-threshold CMT) terms
+ * are returned.
+ */
+function cmt_node_get_terms($nid, $key = 'tid') {
+  static $cmt_terms;
+  if (!isset($cmt_terms[$nid])) {  //  do we need any {vocabulary} info?
+    $result = db_query('SELECT t.*, tv.vid FROM {cmt_term_node} r INNER JOIN {cmt_term_data} t ON r.tid = t.tid INNER JOIN {cmt_term_vocab} tv ON t.tid = tv.tid INNER JOIN {cmt_vocabulary} cv ON tv.vid = cv.vid INNER JOIN {vocabulary} v ON v.vid = cv.vid WHERE r.nid = %d AND cv.cmt_enabled > 0 ORDER BY v.weight, r.vote DESC, t.weight, t.name', $nid);
+    $cmt_terms[$nid] = array();
+    while ($term = db_fetch_object($result)) {
+      $cmt_terms[$nid][$term->$key] = $term;
+    }
+  }
+  return $cmt_terms[$nid];
+}
+
+/**
+ * Community-managed taxonomy callback for node view.
+ */
+function cmt_terms_node_view($node, $inline = TRUE) {
+  if (!$inline) {
+    drupal_set_title(check_plain($node->title));
+  }
+  if (user_access('access community managed taxonomy') && count($cmt_vocabs = cmt_get_vocabularies_by_node($node->nid))) {
+    $module_path = drupal_get_path('module', 'cmt') .'/';
+    drupal_add_css($module_path .'cmt.css');
+    drupal_add_js($module_path .'js/cmt_terms_node_view.js');
+    $output = '<div class="cmt-terms-node-view">';
+
+    // array('nid' => $node->nid, 'vid' => $vid, 'inline' => $inline)
+    // we only need to include this:  'tags' => $tags, 
+    // if the form doesn't track that itself for errors
+    
+  /* so I need to get the real taxonomy metrics and compare them to the community taxonomy variables.  This way I can hide access-controlled terms.  This will require me to also figure out thresholds on my own, and exclude those that are above the threshold (or, simpler, include only those below the threshold).  Uh, actually, I can't fathom what the implications of restricted terms would be for a community-managed vocabulary.  So I'm not going to worry about it for now.
+  
+  I'm also trying to think what I can expose here for testing, 'cause this would be a great place for very hard-to-find bugs to hide
+  */
+    $cmt_terms = cmt_node_get_terms($node->nid);
+    $tax_terms = cmt_taxonomy_node_get_terms($node->nid);
+    $exposed_terms = array_intersect_key($cmt_terms, $tax_terms);
+    // official terms first
+    foreach ($exposed_terms as $tid => $term) {
+      // we don't want to run the same term twice, so remove the official from the proposed
+      unset($cmt_terms[$tid]);
+    }
+    // now, remaining proposed terms
+    foreach ($cmt_terms as $tid => $term) {
+      $output .= '<h4><a href="#">' . $term->name . '</a></h4>';
+      $output .= '<div class="term">';
+      // these are the same for all hierarchies for a term
+      $ladders = cmt_get_ladders($tid);
+      $edit = array(
+        'nid' => $node->nid,
+        'tid' => $tid,
+        'vid' => $term->vid,
+        'ladders' => $ladders,
+      );
+      $output .= drupal_get_form('cmt_term_hierarchy_form', $edit);
+      $output .= '</div>';
+    }
+    foreach ($cmt_vocabs AS $vid => $vocab) {
+      $edit = array(
+        'nid' => $node->nid,
+        'vid' => $vid,
+      );
+      if (count($cmt_vocabs) > 1)  $edit['for'] = ' '.t('for').' '. $vocab->name;
+      else  $edit['for'] = '';
+      $output .= drupal_get_form('cmt_new_term_form', $edit);
+    }
+    $output .= '</div>';
+  }
+  return $output;
+}
+
+/**
+ * Community-managed taxonomy form for managing terms from a node 
+ *
+ * Called by cmt_terms_node_view
+ */
+function cmt_term_hierarchy_form($edit) {  // $edit, $title = NULL  
+  // redundant check...  should be removed somewhere?  Should come before anything?
+  if (!user_access('access community managed taxonomy')) {
+    return;
+  }
+  $vid = $edit['vid'];
+  $vocabulary = taxonomy_get_vocabulary($vid);
+  $options = array();  
+  foreach ($edit['ladders'] AS $ladder) {
+    $ladder_display = cmt_ladder_display($ladder);
+    $ladder_value = cmt_ladder_value($ladder);
+    // @TODO: would explode/implode be faster than serialize here?
+    $options[] = array(serialize($ladder_value) => $ladder_display);
+  }
+  if ($vocabulary->multiple == 1) {
+    $type = 'checkboxes';
+    $description = t('Choose all locations you think this term belongs, if any.');
+  }
+  else {
+    $type = 'radios';
+    $description = t('Choose the one location you think is best for this term.');
+  }
+  $form['term_hierarchy'] = array(
+    '#title' => t('Proposed paths to term ' . $vid),
+    '#type' => $type,
+    '#options' => $options,
+    '#description' => $description,
+  );
+  if ($vocabulary->hierarchy == 0) {
+    $submit = t('Endorse term');
+  }
+  else {
+    $submit = t('Endorse term at this location');
+  }
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => $submit,
+  );
+/*
+  does not apply: must be retrieved for each tid-parent pair.
+  Actually, that's not true.  we could pull it out for each tid-parent pair coming in.
+  $form['content_id'] = array(
+    '#value' => $edit['content_id'],
+  );
+*/
+  $form['nid'] = array(
+    '#type' => 'value',
+    '#value' => $edit['nid'],
+  );
+  $form['vid'] = array(
+    '#type' => 'value',
+    '#value' => $edit['vid'],
+  );
+  return $form;
+}
+
+/**
+ *  Submit callback for term hierarchy form
+ */
+function cmt_term_hierarchy_form_submit($form_id, $form_values) {
+  $hierarchy = $form_values['hierarchy']['#value'];
+  //  in the form array(0, 5, 42)
+  $count = count($hierarchy);
+  foreach ($hierarchy AS $pid) {
+    if ($i == $count) { // last term in set
+      // needs to be associated with the node in question
+      $nid_array = array(
+        'value' => $form_values['nid'],
+        'field' => 'nid',
+      );
+      $tid_array = array(
+        'value' => $tid,
+        'field' => 'tid',
+      );
+      cmt_term_attribute_set($nid_array, $tid_array, 'cmt_term_node', $vid);
+    }
+    // set hierarchy (parent)
+    $tid_array = array(
+      'value' => $tid,
+    );
+    $pid_array = array(
+      'value' => $pid,
+      'field' => 'parent',
+    );
+    cmt_term_attribute_set($tid_array, $pid_array, 'cmt_term_hierarchy', $vid);
+    $pid = $tid;
+    $i++;    
+  }
+}
+
+/**
+ * Form for node view that allows adding of a new term suggestion.
+ *
+ * Look into making this a multi-form to gather initial description and weight suggestions.
+ */
+function cmt_new_term_form($edit) {
+  $vid = $edit['vid'];
+  $vocabulary = taxonomy_get_vocabulary($vid);
+  if ($vocabulary->hierarchy == 0) {
+    $help_text_end = '.';
+  }
+  else {
+    $help_text_end = t(' (optionally preceded by parent terms delimited by ">" to put the term in a hierarchy, which need not already be created).  Example: "Horn of Plenty", Vegetables > rutabaga');
+    // <span class="no-js"></span>
+  }
+  $help_text_end .= '&nbsp; <span="vocabulary-help">' . $vocabulary->help . '</span>';
+  $form['cmt_new_term_terms'] = array(
+    '#type' => 'textfield',
+    '#title' => t('New term ' . $vid) . $edit['for'],
+    '#maxlength' => 265,
+    '#size' => 40,
+    // '#autocomplete_path' => 'cmt/autocomplete/'. $edit['vid'],
+    '#attributes' => array('class' => 'cmt-new-term'),
+    '#description' => t('Text for a term name' . $help_text_end),
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Create term'),
+  );
+  $form['cmt_new_term_nid'] = array(
+    '#type' => 'value',
+    '#value' => $edit['nid'],
+  );
+  $form['cmt_new_term_vid'] = array(
+    '#type' => 'value',
+    '#value' => $vid,
+  );
+  return $form;
+}
+
+/**
+ * Validate new term form
+ */
+function cmt_new_term_form_validate($form_id, $form_values) {
+  if ($form_values['cmt_terms'] == '') {
+    form_set_error('cmt_terms', t('To suggest a new term to associate with this content, you must enter some text for a term name (optionally preceded by parent terms delimited by ">" to put the term in a hierarchy, which need not already be created).'));
+  }
+}
+
+/**
+ * Submit callback for new term form
+ */
+function cmt_new_term_form_submit($form_id, $form_values) {
+  // Add parsing for hierarchical, even comma-separated multiple hierarchical vocabularies, later
+  // this will technically be "cmt_new_terms_form_submit" but I think name stays
+  
+  // parsing function below.  Save called as many times as necessary.
+  // OR do the initial parsing in the validate command, if there's any such thing as invalid input
+
+  // first split on commas
+  $typed_value = $form_values['cmt_terms'];
+  unset($form_values['cmt_terms']);
+  $submit_vid = $form_values['vid'];
+agaric_m("The vid is inside the submit, $submit_vid");
+  // lifted from taxonomy_node_save()
+  // This regexp allows the following types of user input:
+  // this, "somecmpany, llc", "and ""this"" w,o.rks", foo bar
+  // (and, I hope, lot > of > tags)
+  $regexp = '%(?:^|,\ *)("(?>[^"]*)(?>""[^"]* )*"|(?: [^",]*))%x';
+  preg_match_all($regexp, $typed_value, $set_matches);
+  $typed_termsets = array_unique($set_matches[1]);
+  foreach ($typed_termsets as $typed_termset) {
+    // next, split each section into components of the hierarchical path, if any
+    // the regular expression here needs serious attention
+    // it is supposed to separate terms by ">"
+    $regexp = '%(?:^|>\ *)("(?>[^"]*)(?>""[^"]* )*"|(?: [^">]*))%x';
+    preg_match_all($regexp, $typed_termset, $term_matches);
+    $typed_terms = array_unique($term_matches[1]);
+    $count = count($typed_terms);
+    $i = 1;
+    $pid = 0;
+    foreach ($typed_terms as $typed_term) {
+      // If a user has escaped a term (to demonstrate that it is a group,
+      // or includes a comma or quote character), we remove the escape
+      // formatting so to save the term into the database as the user intends.
+     // $typed_term = str_replace('""', '"', preg_replace('/^"(.*)"$/', '\1', $typed_term));
+      $typed_term = trim($typed_term);
+      $terms = cmt_get_term_by_name($typed_term, $vid);
+      if (count($terms)) {  // we found a match
+        if (count($terms) > 1)  drupal_set_message("There is more than one term by the name '$typed_term'.  We will use the first one (ok, we're choosing one at random as far as you're concerned), but hope to provide an interface for choosing the one you want to use soon.", 'status');
+        // @TODO: do what the status message above says
+        $term = $terms[0];
+        $tid = $term->tid;
+        // create new name for term honoring user's exact capitalization
+        $tid_array = array(
+          'value' => $tid,
+        );
+        $name_array = array(
+          'value' => $typed_term,
+          'field' => 'name',
+          'type' => "'%s'",
+        );
+        cmt_term_attribute_set($tid_array, $name_array, 'cmt_term_name', $submit_vid);
+      }
+      else {  // no match
+        // get a term ID, insert a new term name, and join to a vocabulary
+        $cmt_term = cmt_term_create($typed_term, $vid);
+        $tid = $cmt_term['tid'];
+      }
+      if ($i == $count) { // last term in set
+        // needs to be associated with the node in question
+        $nid_array = array(
+          'value' => $form_values['nid'],
+          'field' => 'nid',
+        );
+        $tid_array = array(
+          'value' => $tid,
+          'field' => 'tid',
+        );
+        cmt_term_attribute_set($nid_array, $tid_array, 'cmt_term_node', $vid);
+      }
+      // set hierarchy (parent)
+      $tid_array = array(
+        'value' => $tid,
+      );
+      $pid_array = array(
+        'value' => $pid,
+        'field' => 'parent',
+      );
+      cmt_term_attribute_set($tid_array, $pid_array, 'cmt_term_hierarchy', $vid);
+      $pid = $tid;
+      $i++;
+    }
+  }
+}
+
+function cmt_new_term_full_form_submit($form_id, $form_values) {
+  $vid = $form_values['vid'];
+  $tid = array(
+    'value' => $form_values['tid'],
+  );
+  $description = array(
+    'value' => $form_values['description'],
+    'field' => 'description',
+    'type' => "'%s'",
+  );
+  cmt_term_attribute_set($tid, $description, 'cmt_term_description', $vid);
+}
+
+/**
+ * Create a CMT term with an initial name and acquire a tid, and vote for that
+ * name and assign the term to a vocabulary
+ *
+ * This does NOT check if it already exists.  You have to have done that
+ * already, and you'll have to add the parent afterward.
+ *
+ * @param $name
+ *   Name of the term to create.
+ * @param $vid
+ *   A vocabulary vid to assign the term to.
+ *
+ * @return
+ *   An array with the term ID (tid) 
+ *   (The content_id has already been used to vote and isn't needed,
+ *   but an array gives us easier future expansion.)
+ */
+function cmt_term_create($name, $vid, $vote = 1, $uid = NULL) {
+  // in which cmt_term_data becomes much more than a denormalised table
+  // and becomes the keeper of the CMT tid sequence
+  $result = db_query("INSERT INTO {cmt_term_data} SET name = '%s'", $name);
+  if (!$result) {
+    drupal_set_error("Creating new term (inserting int cmt_term_data to get a tid) failed.");
+    return FALSE;
+  }
+  $tid = cmt_db_last_insert_id('cmt_term_data', 'tid');
+drupal_set_message("TID: " . $tid, 'status');  
+  $tid_array = array(
+    'value' => $tid,
+  );
+  $name_array = array(
+    'value' => $name,
+    'field' => 'name',
+    'type' => "'%s'",
+  );
+  // 4th parameter "TRUE" to turn off a redundant SQL check
+  cmt_term_attribute_set($tid_array, $name_array, 'cmt_term_name', $vid, TRUE);  
+  // all new terms get attached to a vocabulary
+  // so we'll put that in here and ignore it forevermore
+  cmt_term_vocab_set($tid, $vid, TRUE);  // set $new to TRUE: we just created the tid
+  $cmt_term = array(
+    'tid' => $tid,
+  );
+  return $cmt_term;
+}
+
+/**
+ * Saves a community-managed term's relationship to a vocabulary.
+ * 
+ * cmt_term_vocab_set is different from the cmt_term_attribute_set function
+ * because we do not use votingapi.  Users cannot vote on what vocabulary a
+ * term belongs in at this time!  We still need to tie a term to a vocab.
+ *
+ * @param $tid
+ *   A CMT term ID.
+ * @param $vid
+ *   A vocabulary ID of a vocabulary that is community-managed.
+ * @param $new
+ *   An optional flag to skip the if-existing check
+ *
+ * @return
+ *   A database query result resource or TRUE if the term is already assigned
+ *   to the vocabulary; FALSE if the query was not executed correctly. 
+ */
+function cmt_term_vocab_set($tid, $vid, $new = FALSE) {
+  // we won't need this to fetch the content_id, but we will for the others
+  if ($new || !$result = db_query("SELECT * FROM {cmt_term_vocab} WHERE tid=%d AND vid=%d", $tid, $vid)) {
+    // returns a resource ID or FALSE - a resource ID is as good as TRUE, right?
+    return db_query("INSERT INTO {cmt_term_vocab} (tid, vid) VALUES (%d, %d)", $tid, $vid);
+    // no reason to check against a term being in multiple vocabularies
+    // not that this should be able to happen in the current setup
+  }
+  else  return TRUE;  // it's already in there
+}
+
+/**
+ * Saves a community-managed term's attribute and updates votingAPI.
+ *
+ * First it checks to make sure the attribute doesn't already exist for 
+ * this term (as unlikely as that might be), and if it does, uses that
+ * content_id rather than inserting a new row.
+ *
+ * @param $id
+ *   An array with a 'value' set to the CMT term ID or node ID, and 
+ *   optionally a field name other than tid
+ * @param $attribute
+ *   An array with the attribute for that CMT term, including:
+ *     'value' which can be a numeric type, longtext
+ *     'field' the field name that will be saved
+ *     'type' (optional) if not %d, define how db_query should take this
+ * @param $content_type
+ *   A string of the content_type, also the cmt_term_* table name
+ * @param $new
+ *   Optional parameter to assert a new insert, skip the SQL select
+ * @param $value
+ *   Optional vote value if more than 1
+ * @param $uid
+ *   Optional uid if not active user
+ *
+ * @return
+ *  INSERT if a new description, UPDATE if the description was already
+ *  proposed for the term, and FALSE if a query failed. 
+ */
+function cmt_term_attribute_set($id, $attribute, $content_type, $vid, $new = FALSE, $value = 1, $uid = NULL) {
+  // set defaults
+  if (!$id['field'])  $id['field'] = 'tid';
+  if (!$attribute['type'])  $attribute['type'] = '%d';
+  $return = 'INSERT';  // if not overridden, insert new id-attribute pair
+  if (!$new) {
+    $result = db_query("SELECT content_id FROM {".$content_type."} WHERE ".$id['field']."=%d AND ".$attribute['field']."=".$attribute['type'], $id['value'], $attribute['value']);
+    if (!$result) {
+      drupal_set_error("Select query to check for description failed.", 'error');
+      // how do i do this right?  http://agaricdesign.com/throwing-errors-in-drupal-agarics-complete-guide   
+      return FALSE;
+    }
+    if ($cmt_term_attribute = db_fetch_object($result)) {
+      // should I check to make sure nothing crazy has happened 
+      // and there's somehow two cmt_term_attribute rows?
+      $content_id = $cmt_term_attribute->content_id;
+      // this is not a new attribute, we won't insert
+      $return = 'UPDATE';
+    }
+  }
+  if ($return == 'INSERT') {
+    $result = db_query("INSERT INTO {".$content_type."} (".$id['field'].", ".$attribute['field'].") VALUES (%d, ".$attribute['type'].")", $id['value'], $attribute['value']);
+    if (!$result) {
+      drupal_set_error("Inserting new term description failed.");
+      return FALSE;
+    }
+    $content_id = cmt_db_last_insert_id($content_type, 'content_id');
+  }
+  // content_id has been set by select or cmt_db_last_insert_id
+  cmt_vote($content_type, $content_id, $vid);
+  // downstream of cmt_vote will have to throw its own errors if anything goes wrong
+  // this function can't take any more feedback!
+  return $return;
+}
+
+/**
+ * Inserts or updates a vote count for a facet of community-managed taxonomy,
+ * and checks to see if votes have passed thresholds or surpassed existing
+ * results.
+ *
+ * This function accepts a content_type, content_id, and user object 
+ * (defaults to current)
+ * optionally it can also take a value, the default is 1
+ * It calls votingapi 
+ */
+function cmt_vote($content_type, $content_id, $vid, $value = 1, $uid = NULL) {
+  $vote = new stdClass();
+  $vote->tag = 'vote';
+  $vote->value_type = 'points';
+  $vote->value = $value;
+  $votingapi_cache = votingapi_set_vote($content_type, $content_id, $vote, $uid);
+  return cmt_push($content_type, $content_id, $votingapi_cache, $vid);
+}
+
+/**
+ * Calls the appropriate function check what effect a vote had vis-a-vis 
+ * other votes and thresholds, and adjusts official taxonomy as needed.
+ */
+function cmt_push($content_type, $content_id, $votingapi_cache, $vid) {
+  // will not be necessary every call so will be moved later, later
+  $high_content = cmt_get_high($content_id, $vid);
+  $votes = cmt_get_votes($content_type, $content_id);
+  $threshold = cmt_get_threshold($content_type, $vid);
+  switch ($content_type) {
+    case 'cmt_term_description':
+      return cmt_term_description_push($content_id);
+    case 'cmt_term_name':
+      if($votes > $threshold) {
+        return cmt_term_name_push($content_id);
+      }
+      break;
+    case 'cmt_term_node':
+      if ($content_id == $high_content && $votes > $threshold) {
+        return cmt_term_node_push($content_id);
+      }
+      break;
+  }
+}
+
+function cmt_term_description_push($content_id) {
+  // there can be only one description, makes the SQL simpler
+agaric_pr($votingapi_cache);  
+}
+
+function cmt_term_name_push($content_id) {
+
+}
+
+function cmt_term_node_push($content_id) {
+  
+}
+
+/**
+ * A simple helper function that returns a single cached voting result.
+ *
+ * @param $content_type
+ *   A string identifying the type of content (cmt_term_*) whose votes are
+ *   being retrieved.
+ * @param $content_id
+ *   The key ID of the content whose votes are being retrieved.
+ * @return
+ *   A single votes result.
+ */
+function cmt_get_votes($content_type, $content_id) {
+  $result = db_query("SELECT value FROM {votingapi_cache} WHERE content_type='%s' AND content_id=%d AND value_type='points' AND tag='vote' AND function='sum'", $content_type, $content_id);
+  $voting_results = db_fetch_object($result);
+  return $voting_results->value;
+}
+
+/**
+ * Get highest vote for a content type
+ *
+ * Big old logical flaw.  We need to know the highest vote *by vocabulary*
+ * We'll need to add an inner join to cmt_term_* on content_id
+ * and to cmt_term_vocab on tid to get the vocab
+ */
+function cmt_get_high($content_type, $vid, $limit = 1) {
+  $result = db_query("SELECT content_id FROM {votingapi_cache} v WHERE content_type='%s' AND value_type='points' AND tag='vote' AND function='sum' ORDER BY value DESC LIMIT %d", $content_type, $limit);
+  $voting_results = db_fetch_object($result);
+  return $voting_results->content_id;
+}
+
+/**
+ *  Get thresholds for votes.
+ *
+ *  Static function so multiple calls are not a performance hit.
+ */
+function cmt_get_threshold($content_type, $vid) {
+  static $thresholds = array();
+  if (!isset($thresholds[$content_type][$vid])) {
+    $threshold = substr_replace($content_type, '', 4, 5) . '_th';
+    $c = db_query("SELECT %s FROM {cmt_vocabulary} WHERE vid = %d", $threshold, $vid);
+    $results = db_fetch_object($c);
+    $thresholds[$content_type][$vid] = $results->$threshold;
+  }
+  return $thresholds[$content_type];
+}
+
+/**
+ * 
+ *
+ * Extremely loosely based on taxonomy_form_term_submit($form_id, $form_values)
+ * "Accept the form submission for a taxonomy term and save the result."
+ *
+ * The fundamental questions all people must ask themselves at one point in their lives:
+ *   What is the core nature of a taxonomy term?
+ *   What is the minimum aspects of the term necessary before we push it live?
+ *   According to this taxonomy_form_term_submit:
+ *     tid
+ *     name
+ *     description (we know that's optional)
+ *     weight (can default to 0)
+ *     relation (optional)
+ *     hierarchy (0 if nothing else)
+ *     synonym
+ */
+function cmt_expose_term($content_type, $content_id, $vid) {
+  if ($form_values['tid'] && $form_values['name']) {
+    db_query("UPDATE {term_data} SET name = '%s', description = '%s', weight = %d WHERE tid = %d", $form_values['name'], $form_values['description'], $form_values['weight'], $form_values['tid']);
+    $hook = 'update';
+    $status = SAVED_UPDATED;
+  }
+  else if ($form_values['tid']) {
+    return taxonomy_del_term($form_values['tid']);
+  }
+  else {
+    $form_values['tid'] = db_next_id('{term_data}_tid');
+    db_query("INSERT INTO {term_data} (tid, name, description, vid, weight) VALUES (%d, '%s', '%s', %d, %d)", $form_values['tid'], $form_values['name'], $form_values['description'], $form_values['vid'], $form_values['weight']);
+    $hook = 'insert';
+    $status = SAVED_NEW;
+  }
+  db_query('DELETE FROM {term_relation} WHERE tid1 = %d OR tid2 = %d', $form_values['tid'], $form_values['tid']);
+  if ($form_values['relations']) {
+    foreach ($form_values['relations'] as $related_id) {
+      if ($related_id != 0) {
+        db_query('INSERT INTO {term_relation} (tid1, tid2) VALUES (%d, %d)', $form_values['tid'], $related_id);
+      }
+    }
+  }
+  db_query('DELETE FROM {term_hierarchy} WHERE tid = %d', $form_values['tid']);
+  if (!isset($form_values['parent']) || empty($form_values['parent'])) {
+    $form_values['parent'] = array(0);
+  }
+  if (is_array($form_values['parent'])) {
+    foreach ($form_values['parent'] as $parent) {
+      if (is_array($parent)) {
+        foreach ($parent as $tid) {
+          db_query('INSERT INTO {term_hierarchy} (tid, parent) VALUES (%d, %d)', $form_values['tid'], $tid);
+        }
+      }
+      else {
+        db_query('INSERT INTO {term_hierarchy} (tid, parent) VALUES (%d, %d)', $form_values['tid'], $parent);
+      }
+    }
+  }
+  else {
+    db_query('INSERT INTO {term_hierarchy} (tid, parent) VALUES (%d, %d)', $form_values['tid'], $form_values['parent']);
+  }
+  db_query('DELETE FROM {term_synonym} WHERE tid = %d', $form_values['tid']);
+  if ($form_values['synonyms']) {
+    foreach (explode ("\n", str_replace("\r", '', $form_values['synonyms'])) as $synonym) {
+      if ($synonym) {
+        db_query("INSERT INTO {term_synonym} (tid, name) VALUES (%d, '%s')", $form_values['tid'], chop($synonym));
+      }
+    }
+  }
+  if (isset($hook)) {
+    module_invoke_all('taxonomy', $hook, 'term', $form_values);
+  }
+  cache_clear_all();
+  return $status;
+}
+
+/******************************************************************************
+ * Utility, helper and wrapper functions
+ */
+ 
+/**
+ * Return an array of all vocabulary objects for community-managed 
+ * vocabularies.
+ *
+ * @param $cmt_enabled
+ *   Return only those CMT vocabularies which are either 'enabled' or 
+ *   'disabled'.  Default both.
+ */
+function cmt_get_vocabularies($cmt_enabled = 'both') {
+  $where = "";
+  if ($cmt_enabled == 'enabled') $where = "WHERE cv.cmt_enabled > 0 ";
+  elseif ($cmt_enabled == 'disabled') $where = "WHERE cv.cmt_enabled = 0 ";
+  $c = db_query(db_rewrite_sql("SELECT v.*, n.type FROM {vocabulary} v INNER JOIN {cmt_vocabulary} cv ON v.vid = cv.vid LEFT JOIN {vocabulary_node_types} n ON v.vid = n.vid $where ORDER BY v.weight, v.name", 'v', 'vid'), $where);
+  // below identical to taxonomy_get_vocabularies
+  // couldn't we - and taxonomy core - just use taxonomy_get_vocabulary in a loop?
+  $vocabularies = array();
+  $node_types = array();
+  while ($voc = db_fetch_object($c)) {
+    $node_types[$voc->vid][] = $voc->type;
+    unset($voc->type);
+    $voc->nodes = $node_types[$voc->vid];
+    $vocabularies[$voc->vid] = $voc;
+  }
+  return $vocabularies;
+}
+
+/**
+ * Return an array of vocabulary objects for enabled community-managed 
+ * vocabularies applicable to a given node type.
+ *
+ * Static by node nid for performance.
+ * Vocabulary objects do not include node types.
+ */
+function cmt_get_vocabularies_by_node($nid) {
+  static $vocabularies = array();
+  if (!array_key_exists($nid, $vocabularies)) {
+    $node = node_load($nid);
+    $c = db_query(db_rewrite_sql("SELECT v.* FROM {vocabulary} v INNER JOIN {cmt_vocabulary} cv ON v.vid = cv.vid INNER JOIN {vocabulary_node_types} n ON v.vid = n.vid WHERE n.type = '%s' AND cv.cmt_enabled > 0 ORDER BY v.weight, v.name", 'v', 'vid'), $node->type);
+    while ($voc = db_fetch_object($c)) {
+      $vocabularies[$nid][$voc->vid] = $voc;
+    }  
+  }
+  return $vocabularies[$nid];  
+}
+
+/**
+ * Return CMT settings information for the vocabulary object matching a vocabulary ID.
+ *
+ * @param $vid
+ *   The vocabulary's ID
+ *
+ * @return Object
+ *   The vocabulary object with all of its metadata.
+ *   Results are statically cached.
+ */
+function cmt_get_vocabulary($vid) {
+  static $cmt_vocabularies = array();
+  if (!array_key_exists($vid, $cmt_vocabularies)) {
+    $result = db_query('SELECT c.* FROM {cmt_vocabulary} c WHERE c.vid = %d', $vid);
+    $cmt_vocabularies[$vid] = (array)db_fetch_object($result);
+  }
+  return $cmt_vocabularies[$vid];
+}
+
+/**
+ * Get basic term data for a given tid.
+ */
+function cmt_get_term($tid) {
+  return db_fetch_object(db_query("SELECT t.* FROM {cmt_term_data} t WHERE tid = %d", $tid));
+}
+/**
+ * Try to map a string to an existing CMT term.
+ *
+ * Provides a case-insensitive and trimmed mapping, to maximize the
+ * likelihood of a successful match.
+ *
+ * Modeled on taxonomy_get_term_by_name, but with the enhancement of taking an
+ * optional vocabulary ID (vid) to restrict the searching up front
+ * db_rewrite_sql not used, anyone trying to do access control on proposed cmt
+ * terms will have to go through me first 
+ *
+ * @param name
+ *   Name of the cmt term to search for.
+ *
+ * @return
+ *   An array of matching cmt term objects.
+ */
+function cmt_get_term_by_name($name, $vid = NULL) {
+  if ($vid) {
+    $db_result = db_query("SELECT t.tid, t.* FROM {cmt_term_data} t INNER JOIN {cmt_term_vocab} v ON t.tid = v.tid WHERE v.vid=%d AND LOWER('%s') LIKE LOWER(t.name)", $vid, trim($name)); 
+  }
+  else {
+    $db_result = db_query("SELECT t.tid, t.* FROM {cmt_term_data} t WHERE LOWER('%s') LIKE LOWER(t.name)", trim($name)); 
+  }
+  $result = array();
+  while ($term = db_fetch_object($db_result)) {
+    $result[] = $term;
+  }
+  return $result;
+}
+
+/**
+ * Find all parents of a given term ID.
+ */
+function cmt_get_parents($tid, $key = 'tid') {
+  if (is_int($tid)) {
+    // need object,'SELECT parent FROM {cmt_term_hierarchy} WHERE tid = %d'
+    $result = db_query('SELECT t.tid, t.* FROM {cmt_term_data} t INNER JOIN {cmt_term_hierarchy} h ON h.parent = t.tid WHERE h.tid = %d ORDER BY h.vote DESC, weight DESC, tid DESC', $tid);
+    $parents = array();
+    while ($parent = db_fetch_object($result)) {
+      $parents[$parent->$key] = $parent;
+    }
+    return $parents;
+  }
+  else {
+    return array();
+  }
+}
+
+/**
+ * Find all ancestors of a given term ID.
+ *
+ * @TODO:  Is this function used anywhere?
+ */
+function cmt_get_parents_all($tid) {
+  $parents = array();
+  if ($tid) {
+    $parents[] = cmt_get_term($tid);
+    $n = 0;
+    while ($parent = cmt_get_parents($parents[$n]->tid)) {
+      $parents = array_merge($parents, $parent);
+      $n++;
+    }
+  }
+  return $parents;
+}
+
+/**
+ * Takes a CMT term ID and return a complete array of possible ancestor paths.
+ *
+ * Optimization (and maybe caching?) needed for this and the function it calls,
+ * cmt_build_ladder.
+ *
+ * @param tid
+ *   Community-managed taxonomy term ID.
+ *
+ * $return array
+ *   A deeply nested array containing all the information about the tid's
+ *   proposed hierarchies.  The first level for each ancestor path, or ladder.
+ *   Each ladder, in turn, is made up of levels.  Each level has exactly one 
+ *   term object.
+ */
+function cmt_get_ladders($tid) {
+  $ladder = 0;
+  $level = 0;
+  $lterm = array(0 => $tid);  // term we're currently dealing with by level
+  $ladders[$ladder][$level][$tid] = cmt_get_term($tid);
+  cmt_build_ladder($tid, $ladders, $ladder, $level, $lterm);
+  $count = count($ladders);
+  for ($i=0; $i<$count; $i++) {
+    $ladders[$i] = array_reverse($ladders[$i]);
+  }
+  return $ladders;
+}
+
+/**
+ * Internal function called by cmt_get_ladders
+ */
+function cmt_build_ladder($tid, &$ladders = array(), $ladder = 0, $level = 0, $lterm = array()) {
+  if ($parents = cmt_get_parents($tid, 'tid')) {
+    $level = $level + 1;
+    $ladders[$ladder][$level] = $parents;
+    $terms = array_keys($parents);
+    sort($terms);  // sort function works by reference
+    $tid = $terms[0];
+    $lterm[$level] = $tid;
+    cmt_build_ladder($tid, $ladders, $ladder, $level, $lterm);
+  }
+  else { // we reached the top!
+    for ($total_levels = $level; $level > 0; $level--) {
+      if (count($ladders[$ladder][$level]) > 1) {
+        // make new ladder and start counting back up 
+        $old_ladder = $ladder;
+        $new_ladder = $ladder+1;
+        $old_tid = $lterm[$level];
+        $new_tid = _cmt_next_highest_key($ladders[$old_ladder][$level], $old_tid);
+        $ladders[$new_ladder] = array(0 => $ladders[$old_ladder][0]);  // the original term, so there'll be only one
+        for ($new_level = 1; $new_level <= $level; $new_level++) {
+          $ladders[$new_ladder][$new_level] = $ladders[$old_ladder][$new_level];
+          foreach ($ladders[$old_ladder][$new_level] AS $key => $value) {
+            if ($key != $lterm[$new_level]) {
+              unset($ladders[$old_ladder][$new_level][$key]);
+            }
+          }
+        }        
+        unset($ladders[$new_ladder][$level][$old_tid]);
+        // get the next tid
+        $lterm[$level] = $new_tid;
+        cmt_build_ladder($new_tid, $ladders, $new_ladder, $level, $lterm);
+      }
+    }  // we reached the bottom of a clean stack!
+  }
+}
+
+/**
+ * Displays a proposed term hierarchy ladder in the same way users
+ * would type it in.
+ *
+ * Once we got all that information into a ladders array structure,
+ * we have to get it out.  This function is a twin to cmt_ladder_value
+ *
+ * Tip: http://us2.php.net/manual/en/function.implode.php#70165
+ */
+function cmt_ladder_display($ladder, $sep = ' > ') {
+  $levels = count($ladder);
+  $str = "";   
+  for ($level = 1; $level < $levels; $level++) {       
+    if ($level > 1) {
+      $str .= $sep;
+    }       
+    $key = key($ladder[$level]);
+    $str .= $ladder[$level][$key]->name;       
+  }   
+  return $str;  
+}
+
+/**
+ * Provides a value representation of a ladder with the minimal information
+ * needed to save this ladder as a series of votes for pairings in the
+ * cmt_term_hierarchy table
+ *
+ * This function is a twin to cmt_ladder_display
+ */
+function cmt_ladder_value($ladder) {
+  $levels = count($ladder);
+  $val = array();
+  for ($level = 0; $level < $levels; $level++) {       
+    $val[] = key($ladder[$level]);
+  }   
+  return $val;  
+}
+
+/**
+ * Get the next highest key in an array 
+ *
+ * An extremely unoptimized function within an extremely unoptimized function. 
+ */
+function _cmt_next_highest_key($array, $key = 0) {
+  $array = array_keys($array);
+  sort($array);
+  foreach ($array AS $array_key) {
+    if ($array_key > $key)  return $array_key;
+  }
+  // there was no larger key
+  return FALSE;
+}
+
+/**
+ * Return true if a vocabulary ID belongs to a community-managed vocabulary.
+ *
+ * I used this a few times and it could probably be more efficient as a direct 
+ * query, so let's wrap it up for easy optimization later.
+ */
+function cmt_is_vid_cmt($vid) {
+  return in_array($vid, array_keys(cmt_get_vocabularies()));
+}
+
+/**
+ * Returns the last insert id.
+ *
+ * The need for this will go away in Drupal 6
+ *
+ * @param table
+ *   The name of the table you inserted into.
+ * @param field
+ *   The name of the autoincrement field.
+ */
+function cmt_db_last_insert_id($table, $field) {
+  switch ($GLOBALS['db_type']) {
+    case 'mysql':
+    case 'mysqli':
+      return db_result(db_query('SELECT LAST_INSERT_ID()'));
+      break;
+    case 'pgsql':
+      // from http://api.drupal.org/api/file/includes/database.pgsql.inc/6/source
+      return db_result(db_query("SELECT currval('%s_seq')", db_prefix_tables('{'. $table .'}') . '_'. $field)); 
+      break;
+    default:
+      return drupal_set_message(t('Database type @type not supported', array('@type' => $GLOBALS['db_type'])), 'error');
+  }
+}
