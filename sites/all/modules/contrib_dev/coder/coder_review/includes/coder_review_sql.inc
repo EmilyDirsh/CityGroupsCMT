@@ -1,5 +1,4 @@
 <?php
-// $Id: coder_review_sql.inc,v 1.6 2009/10/18 12:45:36 snpower Exp $
 
 /**
  * @file
@@ -31,7 +30,7 @@ function coder_review_sql_reviews() {
     ),
     array(
       '#type' => 'regex',
-      '#value' => '^(select\s+.*\s+from\s+' . $table . '|insert\s+into\s+' . $table . '|update\s+' . $table . '\s+set|delete\s+from\s' . $table . ')\s+.*[Ll][Ii][Mm][Ii][Tt]\s[0-9]+',
+      '#value' => '^(select\s+.*\s+from\s+' . $table . '|insert\s+into\s+' . $table . ')\s+.*[Ll][Ii][Mm][Ii][Tt]\s[0-9]+',
       '#source' => 'quote',
       '#warning_callback' => '_coder_review_sql_db_query_range_warning',
     ),
@@ -46,14 +45,6 @@ function coder_review_sql_reviews() {
       '#value' => '^(select\s+.*\s+from\s+' . $table . '\s+.+?=\s*`|insert\s+into\s+' . $table . '\s+.*?VALUES\s*(\(\s*`|\(.*?,\s*`)|update\s+' . $table . '\s+set\s+.*?=\s*`|delete\s+from\s' . $table . '\s+.*?=\s*`)',
       '#source' => 'quote',
       '#warning' => "Don't use back ticks to quote values as it is not compliant with ANSI SQL"
-    ),
-    array(
-      '#type' => 'regex',
-      '#filename' => array('install'),
-      '#function' => '_update_[0-9]+$',
-      '#source' => 'allphp',
-      '#value' => 'db_query\s*\(\s*[\'"](UPDATE|INSERT|DELETE)\s+',
-      '#warning_callback' => '_coder_review_sql_db_query_in_install_function',
     ),
     array(
       '#type' => 'regex',
@@ -86,21 +77,10 @@ function _coder_review_sql_db_query_range_warning() {
   );
 }
 
-function _coder_review_sql_db_query_in_install_function() {
-  return array(
-    '#warning' => t('Use !update_sql() instead of !db_query() in !hook_update_N()',
-      array(
-        '!update_sql' => theme('drupalapi', array('function' => 'update_sql')),
-        '!db_query' => theme('drupalapi', array('function' => 'db_query')),
-        '!hook_update_N' => theme('drupalapi', array('function' => 'hook_update_N')),
-      )
-    ),
-  );
-}
-
 function _coder_review_sql_select_count_warning() {
   return array(
-    '#warning' => t('You may not want to use SELECT COUNT(*), if all you want to do is check for the existance of any rows, rather than the actualy numer of rows.'),
+    '#warning' => t('You may not want to use SELECT COUNT(*), if all you want to do is check for the existance of any rows, rather than the actual number of rows.'),
     '#link' => 'http://drupal.org/node/224333#select_count',
   );
 }
+

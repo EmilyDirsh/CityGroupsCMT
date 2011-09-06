@@ -1,5 +1,4 @@
 <?php
-// $Id: coder_review_style.inc,v 1.10 2010/04/17 21:26:03 douggreen Exp $
 
 /**
  * @file
@@ -43,6 +42,7 @@ function coder_review_style_reviews() {
     array(
       '#type' => 'regex',
       '#value' => '(\S=>|=>\S)',
+      '#source' => 'php',
       '#warning' => 'Arrays should be formatted with a space separating each element and assignment operator',
     ),
     array(

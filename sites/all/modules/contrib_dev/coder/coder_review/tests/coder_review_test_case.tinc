@@ -1,5 +1,4 @@
 <?php
-// $Id: coder_review_test_case.tinc,v 1.6 2009/10/18 22:11:03 snpower Exp $
 
 /**
  * @file
@@ -15,12 +14,7 @@ class CoderReviewTestCase extends DrupalUnitTestCase {
   }
 
   function setUp() {
-    // Only do the setUp once per test case, not once per function call.
-    static $run_once;
-    if (!isset($run_once)) {
-      parent::setUp('coder_review');
-      $run_once = TRUE;
-    }
+    parent::setUp('coder_review');
   }
 
   function runTest($code, $severity = SEVERITY_MINOR) {
@@ -34,8 +28,10 @@ class CoderReviewTestCase extends DrupalUnitTestCase {
       '#test' => $code,
       '#php_extensions' => $ext,
       '#include_extensions' => _coder_review_get_reviews_extensions($ext, $reviews),
+      '#ignore_lines' => array(),
     );
     _coder_review_read_and_parse_file($coder_args);
+    $reviews[$this->review_name]['#review_name'] = $this->review_name;
     $results = do_coder_review($coder_args, $reviews[$this->review_name]);
 
     unset($results['#stats']);
@@ -52,8 +48,10 @@ class CoderReviewTestCase extends DrupalUnitTestCase {
       '#filename' => drupal_get_path('module', 'coder_review_test') . '/coder_review_test.module',
       '#php_extensions' => $ext,
       '#include_extensions' => _coder_review_get_reviews_extensions($ext, $reviews),
+      '#ignore_lines' => array(),
     );
     _coder_review_read_and_parse_file($coder_args);
+    $reviews[$this->review_name]['#review_name'] = $this->review_name;
     $results = do_coder_review($coder_args, $reviews[$this->review_name]);
 
     unset($results['#stats']);
@@ -65,13 +63,10 @@ class CoderReviewTestCase extends DrupalUnitTestCase {
     $results = $this->runTest($code);
 
     // Display the test results.
-    $message = 'Pass:'. str_replace(array('%s', '%d'), array('%%s', '%%d'), $code);
-    if (count($results) == 0) {
-      $this->assertTrue(TRUE, check_plain($message));
-    }
-    else {
-      $this->assertTrue(FALSE, check_plain($message) .': '. $this->getWarnings($results));
-    }
+    $message = 'Pass: ';
+    $message .= $this->getWarnings($results);
+    $message .= '<pre>' . check_plain(str_replace(array('%s', '%d'), array('%%s', '%%d'), $code)) . '</pre>';
+    $this->assertTrue(count($results) == 0, $message);
   }
 
   protected function assertCoderReviewFail($code) {
@@ -79,13 +74,10 @@ class CoderReviewTestCase extends DrupalUnitTestCase {
     $results = $this->runTest($code);
 
     // Display the test results.
-    $message = 'Fail:'. str_replace(array('%s', '%d'), array('%%s', '%%d'), $code);
-    if (count($results) <= 1) {
-      $this->assertTrue(count($results) == 1, check_plain($message));
-    }
-    else {
-      $this->assertTrue(FALSE, check_plain($message) .': '. $this->getWarnings($results));
-    }
+    $message = 'Fail: ';
+    $message .= $this->getWarnings($results);
+    $message .= '<pre>' . check_plain(str_replace(array('%s', '%d'), array('%%s', '%%d'), $code)) . '</pre>';
+    $this->assertTrue(count($results), $message);
   }
   
   private function getWarnings($results) {

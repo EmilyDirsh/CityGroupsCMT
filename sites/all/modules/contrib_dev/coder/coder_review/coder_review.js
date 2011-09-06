@@ -1,4 +1,3 @@
-// $Id: coder_review.js,v 1.2 2009/08/08 14:38:56 snpower Exp $
 (function ($) {
   jQuery.fn.extend({
     check : function() { return this.each(function() { this.checked = true; }); },

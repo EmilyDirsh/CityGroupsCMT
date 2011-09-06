@@ -1,5 +1,4 @@
 <?php
-// $Id: coder_review_5x.inc,v 1.2 2009/10/18 12:45:36 snpower Exp $
 
 /**
  * @file
@@ -86,7 +85,7 @@ function coder_review_5x_reviews() {
 function _coder_review_5x_callback(&$coder_args, $review, $rule, $lines, &$results) {
   // Only perform this check on module's (not includes).
   $filename = $coder_args['#filename'];
-  if (substr($filename, -7) == '.module') {
+  if (drupal_substr($filename, -7) == '.module') {
     // Make sure that a .info file exists.
     $filename = drupal_substr(realpath($filename), 0, -7) . '.info';
     if (!file_exists($filename)) {

@@ -1,11 +1,9 @@
 <?php
-// $Id: coder_upgrade.api.php,v 1.10 2010/08/12 01:05:28 solotandem Exp $
-
 /**
  * @file
- * Hooks provided by the Coder Upgrade module.
+ * Documents hooks provided by this module.
  *
- * Copyright 2009-10 by Jim Berry ("solotandem", http://drupal.org/user/240748)
+ * Copyright 2009-11 by Jim Berry ("solotandem", http://drupal.org/user/240748)
  */
 
 /**
@@ -35,10 +33,11 @@
  * @endcode
  *
  * @return
- *   An associative array (keyed on the module name) with each element being an
+ *   An associative array (keyed on the upgrade name) with each element being an
  *   associative array with the following elements:
  *   - 'title': A description of the upgrade routines provided by the upgrade set.
  *   - 'link': An optional link to an issue describing the upgrade routines.
+ *   - 'module': The name of the module providing the upgrade routines.
  *   - 'files': An optional array of file names containing the upgrade routines.
  *     The name includes any relative path inside the module directory. Defaults
  *     to 'your_module_name.upgrade'.
@@ -47,11 +46,12 @@ function hook_upgrade_info() {
   $upgrade = array(
     'title' => t('Your module API changes from 6.x to 7.x'),
     'link' => 'http://...',
+    'module' => 'your_module_name',
     'files' => array(
       'upgrades/your_module_name.upgrade',
     ),
   );
-  return array('your_module_name' => $upgrade);
+  return array('your_upgrade_name' => $upgrade);
 }
 
 /**
@@ -72,7 +72,7 @@ function hook_upgrade_info() {
  * expression. To modify the latter, use hook_upgrade_file_alter(). Refer to the
  * grammar parser documentation for details of the function call object.
  *
- * @see hook_upgrade_file_alter
+ * @see hook_upgrade_file_alter()
  * @see PGPFunctionCall
  *
  * @param PGPFunctionCall $node
@@ -111,7 +111,7 @@ function hook_upgrade_call_FUNCTION_NAME_alter(&$node, &$reader) {
  * expression. To modify the latter, use hook_upgrade_file_alter(). Refer to the
  * grammar parser documentation for details of the function call object.
  *
- * @see hook_upgrade_file_alter
+ * @see hook_upgrade_file_alter()
  * @see PGPFunctionCall
  *
  * @param PGPFunctionCall $node
@@ -166,7 +166,7 @@ function hook_upgrade_call_alter(&$node, &$reader, $name) {
  * Refer to the grammar parser documentation for details of the function object
  * (i.e. PGPClass).
  *
- * @see hook_upgrade_file_alter
+ * @see hook_upgrade_file_alter()
  * @see PGPClass
  *
  * @param PGPNode $node
@@ -224,7 +224,7 @@ function hook_upgrade_hook_HOOK_NAME_alter(&$node, &$reader) {
  * Refer to the grammar parser documentation for details of the function object
  * (i.e. PGPClass).
  *
- * @see hook_upgrade_file_alter
+ * @see hook_upgrade_file_alter()
  * @see PGPClass
  *
  * @param PGPNode $node
@@ -284,7 +284,7 @@ function hook_upgrade_file_alter(&$reader) {
   foreach ($nodes as &$node) {
     // Get the function call object.
     $item = &$node->data;
-    if (!isset($item) || !is_object($item) || !is_a($item, 'PGPFunctionCall') || $item->type != T_FUNCTION_CALL) {
+    if (!isset($item) || !is_object($item) || !($item instanceof PGPFunctionCall) || $item->type != T_FUNCTION_CALL) {
       /*
        * These checks are necessary as the reference (i.e. $item) could have
        * been changed in another routine so that it no longer refers to a
@@ -301,7 +301,7 @@ function hook_upgrade_file_alter(&$reader) {
      *
      * Review the grammar structure object using $item->print_r().
      */
-    if (is_a($item->name, 'PGPOperand') && $item->name->findNode('value') == '$this') {
+    if ($item->name instanceof PGPOperand && $item->name->findNode('value') == '$this') {
       // Strip '$this->' from the name.
       $name = substr($item->name->toString(), 7);
       // Modify the function call
@@ -317,9 +317,9 @@ function hook_upgrade_file_alter(&$reader) {
  * the grammar parser. This hook allows for segregation of upgrade routines that
  * only apply to an install file (e.g. the database schema API).
  *
- * @see hook_upgrade_file_alter
- * @see hook_upgrade_hook_HOOK_NAME_alter
- * @see hook_upgrade_hook_alter
+ * @see hook_upgrade_file_alter()
+ * @see hook_upgrade_hook_HOOK_NAME_alter()
+ * @see hook_upgrade_hook_alter()
  *
  * @param PGPReader $reader
  *   The object containing the grammar statements of the file to convert.

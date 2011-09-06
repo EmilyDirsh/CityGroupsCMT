@@ -1,5 +1,4 @@
 <?php
-// $Id: coder_review_7x.test,v 1.40 2009/10/18 23:50:44 snpower Exp $
 
 /**
  * @file
@@ -31,12 +30,18 @@ class CoderReviewUpgrade7xTest extends CoderReviewTestCase {
     // N/A - in comment review - http://drupal.org/node/224333#afile
     // N/A - http://drupal.org/node/224333#module_file_during_install
     // N/A - http://drupal.org/node/224333#module_version_dependencies
+    // N/A - http://drupal.org/node/224333#update_dependencies --- New update dependency system, affecting the order in which module updates are run
+    // N/A - http://drupal.org/node/224333#configure_info --- Module .info files can have configure line
+    // N/A - http://drupal.org/node/224333#api_php --- Code documentation added to module.api.php
 
     // NO TESTS - http://drupal.org/node/224333#registry
     // Can't implement tests because it's reviewed by a review callback, which
     // needs physical files, and because it's a .info file.
 
-    // http://drupal.org/node/224333#api_php
+    // http://drupal.org/node/224333#update_sql and TEST MODULE
+    $this->assertCoderReviewFail('  $ret = update_sql("UPDATE {node} SET status = 1");');
+    
+
     // http://drupal.org/node/224333#update_php
   }
 
@@ -44,6 +49,11 @@ class CoderReviewUpgrade7xTest extends CoderReviewTestCase {
     // N/A - http://drupal.org/node/224333#variable_get_default_null
     // N/A - http://drupal.org/node/224333#hook_modules_action
     // N/A - http://drupal.org/node/224333#static_variable_api
+    // N/A - http://drupal.org/node/224333#archive-tar
+    // N/A - http://drupal.org/node/224333#user-1
+    // N/A - http://drupal.org/node/224333#hook_module_implements_alter
+    // N/A - http://drupal.org/node/224333#drupal_static_advanced
+    // N/A - http://drupal.org/node/224333#hook_update_index
 
     // http://drupal.org/node/224333#module_implements_not_module_list
     $this->assertCoderReviewFail("  foreach (module_list() as \$module) {\n  module_invoke(\$module, 'foo');\n}");
@@ -104,10 +114,13 @@ class CoderReviewUpgrade7xTest extends CoderReviewTestCase {
     $this->assertCoderReviewFail('  drupal_eval(\'<?php print "Hello"; ?>\');');
 
     // http://drupal.org/node/224333#http_header_functions
-    $this->assertCoderReviewPass("  drupal_set_header('Content-Type', 'text/plain');");
+    // http://drupal.org/node/224333#drupal_set_header_renamed
+    $this->assertCoderReviewPass("  drupal_add_http_header('Content-Type', 'text/plain');");
     $this->assertCoderReviewFail("  drupal_set_header('Content-Type: text/plain');");
-    $this->assertCoderReviewPass("  drupal_set_header('500 Internal server error');");
+    $this->assertCoderReviewPass("  drupal_add_http_header('Status', '500 Internal server error');");
     $this->assertCoderReviewFail("  drupal_set_header(\$_SERVER['SERVER_PROTOCOL'] . ' 500 Internal server error');");
+    $this->assertCoderReviewPass("  drupal_get_http_header();");
+    $this->assertCoderReviewFail("  drupal_get_headers();");
 
     // http://drupal.org/node/224333#drupal_set_content
     $this->assertCoderReviewFail("  drupal_set_content('footer', 'Adding custom text to the footer');");
@@ -122,14 +135,34 @@ class CoderReviewUpgrade7xTest extends CoderReviewTestCase {
     $this->assertCoderReviewPass("  function drupal_set_time_limit () {\n  set_time_limit(100);\n}");
     $this->assertCoderReviewPass("  function foo () {\n  drupal_set_time_limit(100);\n}");
 
-    // http://drupal.org/node/224333#archive-tar
     // http://drupal.org/node/224333#search-api
-    // http://drupal.org/node/224333#user-1
+    $this->assertCoderReviewFail("  function mymodule_search() {\n  ");
+    $this->assertCoderReviewPass("  function mymodule_search_info() {\n  ");
+
+
+    // http://drupal.org/node/224333#drupal_alter
+    // http://drupal.org/node/224333#new_hook_hook_info
+    // http://drupal.org/node/224333#email-html
+
+    // http://drupal.org/node/224333#remove-drupal-urlencode
+    $this->assertCoderReviewFail('  drupal_urlencode($url);');
+    $this->assertCoderReviewPass('  drupal_encode_path($url);');
+
+    // http://drupal.org/node/224333#watchdog_emerg
+    $this->assertCoderReviewFail("  watchdog('test', 'my message', array(), WATCHDOG_EMERG);");
+    $this->assertCoderReviewFail("  watchdog('test', 'my message', array(),WATCHDOG_EMERG);");
+    $this->assertCoderReviewPass("  watchdog('test', 'my message', array(), WATCHDOG_EMERGENCY);");
+
+    // http://drupal.org/node/224333#system_retrieve_file
 
   }
 
   function testPermissions7x() {
-    // N/A - http://drupal.org/node/224333#moved_statistics_settings
+    // N/A - in system http://drupal.org/node/224333#moved_statistics_settings
+    // N/A - http://drupal.org/node/224333#user-roles-api
+    // N/A - http://drupal.org/node/224333#permissions_restrict_access
+    // N/A - http://drupal.org/node/224333#node_access_alter_hooks
+    // Rolled back - http://drupal.org/node/224333#system_admin_menu_block_access
 
     // UNCLEAR - http://drupal.org/node/224333#hook_node_access_records
     // UNCLEAR - http://drupal.org/node/224333#bypass_node_access
@@ -146,8 +179,6 @@ class CoderReviewUpgrade7xTest extends CoderReviewTestCase {
     $this->assertCoderReviewFail('  db_query("SELECT * FROM {permission}");');
     $this->assertCoderReviewFail('  db_query("DELETE FROM {permission}");');
 
-    // http://drupal.org/node/224333#node_access_alter_hooks
-
     // http://drupal.org/node/224333#hook_permission
     $this->assertCoderReviewFail("  function mymodule_perm() {\n}");
     $this->assertCoderReviewPass("  function mymodule_permission() {\n}");
@@ -157,16 +188,17 @@ class CoderReviewUpgrade7xTest extends CoderReviewTestCase {
     $this->assertCoderReviewFail('  $permission = "use PHP for block visibility";');
     $this->assertCoderReviewFail("  return array('use PHP for block visibility');");
 
-    // http://drupal.org/node/224333#system_admin_menu_block_access
-
     // http://drupal.org/node/224333#hook_node_access
     $this->assertCoderReviewFail("  function mymodule_access() {\n}");
     $this->assertCoderReviewPass("  function mymodule_node_access() {\n}");
 
-    // http://drupal.org/node/224333#user-roles-api
   }
 
   function testDatabase7x() {
+    // N/A - http://drupal.org/node/224333#schema_date_time --- Schema API now supports date and time types natively
+    // N/A - http://drupal.org/node/224333#foreign-keys-added
+    // in test module http://drupal.org/node/224333#install-schema --- Database schema (un)installed automatically
+
     // http://drupal.org/node/224333#dbtng
 
     // http://drupal.org/node/224333#schema_translation
@@ -192,7 +224,6 @@ class CoderReviewUpgrade7xTest extends CoderReviewTestCase {
 
     // http://drupal.org/node/224333#select_count
     $this->assertCoderReviewFail("  db_query( 'SELECT COUNT (*) FROM {users}')");
-    // http://drupal.org/node/224333#foreign-keys-added
   }
 
   function testMenu7x() {

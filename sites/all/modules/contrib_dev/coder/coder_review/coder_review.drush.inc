@@ -1,5 +1,4 @@
 <?php
-// $Id: coder_review.drush.inc,v 1.10 2010/10/31 09:42:47 snpower Exp $
 
 /**
  * @file
@@ -16,6 +15,8 @@ function coder_review_drush_help($section) {
                 . "\n  options:"
                 . "\n    summary - display summary information only, no warning output"
                 . "\n    no-empty - hide results that are empty"
+                . "\n    xml - output results as xml"
+                . "\n    checkstyle - output results in Checkstyle xml format"
                 . "\n  severity: show warnings at or above severity level"
                 . "\n     major|minor|critical"
                 . "\n  review: one or more reviews"
@@ -33,7 +34,7 @@ function coder_review_drush_help($section) {
                 . "\n     combine with active|core|contrib|all|default"
                 . "\n    <patch-url> - URL to patch file"
                 . "\n    <file-path> - path to file or multiple files, relative to Drupal installation"
-               );
+    );
   }
 }
 
@@ -60,13 +61,17 @@ function _coder_review_set_form_modules(&$settings) {
   }
 }
 
+/**
+ * Do the actual review.
+ */
 function coder_review_drush_review() {
   _coder_review_drush_set_option('drush');
 
-  // process command line arguments
+  // Process command line arguments.
   $args = func_get_args();
   $reviews = array();
   $modules = array();
+  $output = array();
   $settings = _coder_review_get_default_settings();
   if (count($args)) {
     $avail_reviews = _coder_review_reviews();
@@ -74,6 +79,8 @@ function coder_review_drush_review() {
       switch ($arg) {
         case 'summary':
         case 'no-empty':
+        case 'xml':
+        case 'checkstyle':
           _coder_review_drush_set_option($arg);
           break;
         case 'active':
@@ -93,9 +100,9 @@ function coder_review_drush_review() {
           if (isset($avail_reviews[$arg])) {
             $reviews[$arg] = $arg;
           }
-          elseif (substr($arg, 0, 3) == 'no-') {
+          elseif (drupal_substr($arg, 0, 3) == 'no-') {
             _coder_review_set_form_modules($settings);
-            unset($settings['coder_modules-' . substr($arg, 3)]);
+            unset($settings['coder_modules-' . drupal_substr($arg, 3)]);
           }
           elseif (strpos($arg, '*') !== FALSE || strpos($arg, '%') !== FALSE) {
             $result = db_query('SELECT name FROM {system} WHERE name LIKE :name', array(':name' => str_replace('*', '%', $arg)));
@@ -104,7 +111,7 @@ function coder_review_drush_review() {
               $match = TRUE;
             }
             if (!isset($match)) {
-              drush_print(dt('no matches found for @name', array('@name' => $arg)));
+              _coder_review_drush_print(dt('no matches found for @name', array('@name' => $arg)));
               return;
             }
             unset($settings['coder_active_modules']);
@@ -137,19 +144,32 @@ function coder_review_drush_review() {
           break;
       }
     }
-    $output = array();
+    if (_coder_review_drush_is_option('checkstyle')) {
+      _coder_review_drush_xml_output_header('checkstyle');
+    }
+    elseif (_coder_review_drush_is_option('xml')) {
+      _coder_review_drush_xml_output_header('xml');
+    }
     if (isset($severity_name)) {
+      if (_coder_review_drush_is_option('xml')) {
+        _coder_review_drush_xml_output_severity($severity_name);
+      }
       $output[] = dt('Severity @severity_name', array('@severity_name' => $severity_name));
       $settings['coder_severity'] = _coder_review_severity($severity_name);
     }
     if (count($reviews)) {
-      foreach ($reviews as $review) {
-        $output[] = $avail_reviews[$review]['#title'];
+      if (_coder_review_drush_is_option('xml') && !_coder_review_drush_is_option('checkstyle')) {
+        _coder_review_drush_xml_output_reviews($reviews, $avail_reviews);
+      }
+      else {
+        foreach ($reviews as $review) {
+          $output[] = $avail_reviews[$review]['#title'];
+        }
       }
       $settings['coder_reviews'] = $reviews;
     }
-    if (count($output) && !_coder_review_drush_is_option('summary')) {
-      drush_print(implode(', ', $output) . "\n");
+    if (count($output) && !_coder_review_drush_is_option('summary') && !_coder_review_drush_is_option('xml') && !_coder_review_drush_is_option('checkstyle')) {
+      _coder_review_drush_print(implode(', ', $output) . "\n");
     }
   }
   _coder_review_set_form_modules($settings);
@@ -157,10 +177,20 @@ function coder_review_drush_review() {
 
   $form_state['storage'] = $settings;
   coder_review_page_form(array(), $form_state);
+
+  if (_coder_review_drush_is_option('checkstyle')) {
+    _coder_review_drush_xml_output_footer('checkstyle');
+  }
+  elseif (_coder_review_drush_is_option('xml')) {
+    _coder_review_drush_xml_output_footer('xml');
+  }
 }
 
+/**
+ * Handle patch reviews.
+ */
 function _coder_review_drush_is_patch_arg(&$arg) {
-  if (substr($arg, 0, 7) == 'http://' || is_file(realpath($arg))) {
+  if (drupal_substr($arg, 0, 7) == 'http://' || is_file(realpath($arg))) {
     return TRUE;
   }
   // @NOTE: relies on http://drupal.org/node/297611
@@ -173,36 +203,83 @@ function _coder_review_drush_is_patch_arg(&$arg) {
   }
 }
 
+/**
+ * Theme printing of results and filenames.
+ */
 function theme_drush_coder_review($variables) {
   $name = $variables['name'];
   $filename = $variables['filename'];
   $results = $variables['results'];
   if (!_coder_review_drush_is_option('summary') && !empty($results) && ((count($results) && !isset($results[0])) || !_coder_review_drush_is_option('no-empty'))) {
-    drush_print($filename . ":\n " . implode("\n ", $results) . "\n");
+    if (_coder_review_drush_is_option('checkstyle') || _coder_review_drush_is_option('xml')) {
+      _coder_review_drush_xml_output_results($filename, $results);
+    }
+    else {
+      _coder_review_drush_print($filename . ":\n " . implode("\n ", $results) . "\n");
+    }
   }
 }
 
+/**
+ * Theme warning message, including source snippet.
+ */
 function theme_drush_coder_review_warning($variables) {
   $warning = $variables['warning'];
   $severity_name = $variables['severity_name'];
   $lineno = isset($variables['lineno']) ? $variables['lineno'] : 0;
   $line = isset($variables['line']) ? $variables['line'] : '';
-  $output  = $lineno ? '+' . $lineno . ': ' : '';
-  $output .= '[' . $severity_name . '] ';
-  $output .= is_array($warning) ? $warning['#warning'] : $warning;
-  return _coder_review_drush_output($output);
-}
-
-function coder_review_print_drush_messages() {
-  foreach (drupal_get_messages() as $type => $messages) {
-    drush_print(dt(ucfirst($type) . ' Messages') . ":\n " . _coder_review_drush_output(implode("\n ", $messages)) . "\n");
+  $checkstyle_levels = array(
+    'minor' => 'info',
+    'normal' => 'warning',
+    'critical' => 'error',
+  );
+  if (_coder_review_drush_is_option('xml') || _coder_review_drush_is_option('checkstyle')) {
+    $attr = array(
+      'line' => $lineno,
+      'column' => 0,
+      'severity' => $severity_name,
+      'message' => $warning,
+      'source' => $line,
+    );
+    if (_coder_review_drush_is_option('checkstyle')) {
+      $attr['severity'] = $checkstyle_levels[$severity_name];
+    }
+    $output = '<error '. drupal_attributes($attr) . ' />';
+    return $output;
+  }
+  else {
+    $output  = $lineno ? '+' . $lineno . ': ' : '';
+    $output .= '[' . $severity_name . '] ';
+    $output .= is_array($warning) ? $warning['#warning'] : $warning;
+    return _coder_review_drush_output($output);
   }
 }
 
+/**
+ * Handle printing of drupal_set_message() messages.
+ */
+function coder_review_print_drush_messages() {
+  foreach (drupal_get_messages() as $type => $messages) {
+    $output = _coder_review_drush_output(implode("\n ", $messages));
+    if (_coder_review_drush_is_option('xml') && !_coder_review_drush_is_option('checkstyle')) {
+      _coder_review_drush_print('<status type="' . $type . '">' . $output . '</status>');
+    }
+    elseif (!_coder_review_drush_is_option('checkstyle')) {
+      _coder_review_drush_print(dt(drupal_ucfirst($type) . ' Messages') . ":\n " . $output . "\n");
+    }
+  }
+}
+
+/**
+ * Strip HTML tags from drush output.
+ */
 function _coder_review_drush_output($output) {
   return html_entity_decode(strip_tags($output));
 }
 
+/**
+ * Helper function to set a command line option.
+ */
 function _coder_review_drush_set_option($option) {
   global $_coder_drush_options;
   if (!isset($_coder_drush_options)) {
@@ -211,7 +288,92 @@ function _coder_review_drush_set_option($option) {
   $_coder_drush_options[$option] = TRUE;
 }
 
+/**
+ * Helper function to determine if an option is set.
+ */
 function _coder_review_drush_is_option($option) {
   global $_coder_drush_options;
   return isset($_coder_drush_options[$option]);
 }
+
+/**
+ * Switch between print and pipe print output.
+ */
+function _coder_review_drush_print($message) {
+  if (drush_get_context('DRUSH_PIPE')) {
+    drush_print_pipe($message);
+  }
+  else {
+    drush_print($message);
+  }
+}
+
+
+
+
+/**
+ * XML output functions.
+ */
+
+/**
+ * XML: output appropriate header tag.
+ */
+function _coder_review_drush_xml_output_header($type = 'xml') {
+  // Put in an extra concatenation so syntax highlighting in vim doesn't break.
+  _coder_review_drush_print('<?xml version="1.0" encoding="UTF-8"?' . '>');
+  switch ($type) {
+    case 'checkstyle':
+      _coder_review_drush_print('<checkstyle version="1.3.0RC1">');
+      break;
+    case 'xml':
+    default:
+      _coder_review_drush_print('<coderreview version="1.1">');
+      break;
+  }
+}
+
+/**
+ * XML: output appropriate footer tag.
+ */
+function _coder_review_drush_xml_output_footer($type = 'xml') {
+  switch ($type) {
+    case 'checkstyle':
+      _coder_review_drush_print('</checkstyle>');
+      break;
+    case 'xml':
+    default:
+      _coder_review_drush_print('</coderreview>');
+      break;
+  }
+}
+
+/**
+ * XML: output severity level if provided.
+ */
+function _coder_review_drush_xml_output_severity($severity_name) {
+  _coder_review_drush_print('<severity>' . $severity_name . '</severity>');
+}
+
+/**
+ * XML: output list of chosen reviews.
+ */
+function _coder_review_drush_xml_output_reviews($reviews, $avail_reviews) {
+  _coder_review_drush_print('<reviews>');
+  foreach ($reviews as $review) {
+    _coder_review_drush_print('<review>' . $avail_reviews[$review]['#title'] . '</review>');
+  }
+  _coder_review_drush_print('</reviews>');
+}
+
+/**
+ * XML: output filename and its results (if any).
+ */
+function _coder_review_drush_xml_output_results($filename, $results) {
+  if (empty($results) || (count($results) == 1 && isset($results[0]))) {
+    _coder_review_drush_print('<file name = "' . $filename . '" />');
+  }
+  else {
+    _coder_review_drush_print('<file name = "' . $filename . '">' . "\n" . implode("\n ", $results) . "\n" . '</file>');
+  }
+}
+

@@ -1,5 +1,4 @@
 <?php
-// $Id: coder_review_i18n_po.inc,v 1.4 2009/10/18 12:45:36 snpower Exp $
 
 /**
  * @file
@@ -62,7 +61,7 @@ function _coder_review_translation_callback(&$coder_args, $review, $rule, $lines
       }
 
       // Check the translation trailing periods.
-      if (substr($msgid, -1, 1) == '.' && !substr($msgstr, -1, 1) != '.') {
+      if (drupal_substr($msgid, -1, 1) == '.' && !drupal_substr($msgstr, -1, 1) != '.') {
         $rule = array(
           '#warning' => 'The translation text should end in a period when the same original text also ends in a period.',
         );

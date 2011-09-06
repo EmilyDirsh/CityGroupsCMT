@@ -1,5 +1,4 @@
 <?php
-// $Id: coder_review_47.inc,v 1.2 2009/10/18 12:45:36 snpower Exp $
 
 /**
  * @file

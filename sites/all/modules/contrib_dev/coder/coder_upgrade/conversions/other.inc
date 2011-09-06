@@ -1,6 +1,4 @@
 <?php
-// $Id: coder_upgrade.other.inc,v 1.43 2010/02/15 22:49:40 solotandem Exp $
-
 /**
  * @file
  * Other conversion routine file for the coder_upgrade module.

@@ -1,16 +1,15 @@
 <?php
-// $Id: coder_upgrade.db.inc,v 1.10 2010/10/25 20:23:14 solotandem Exp $
-
 /**
  * @file
- * Database function call conversion routine file for the coder_upgrade module.
- * These routines upgrade functions (or hooks) using the grammar parser.
+ * Provides conversion routines applied to database API function calls and hooks.
+ *
+ * These routines use the grammar parser.
  *
  * The functions in this conversion routine file correspond to topics in the
  * category roadmap at http://drupal.org/node/394070 that are marked with a
  * green check mark in the Upgrade column.
  *
- * Copyright 2009-10 by Jim Berry ("solotandem", http://drupal.org/user/240748)
+ * Copyright 2009-11 by Jim Berry ("solotandem", http://drupal.org/user/240748)
  */
 
 /**
@@ -123,6 +122,7 @@ function coder_upgrade_upgrade_call_db_rewrite_sql_alter(&$node, &$reader) {
  *   The node containing the function call object to be replaced.
  * @param PGPOperand $operand
  *   The query string to be parsed (first parameter to $item).
+ *
  * @return string
  *   The query string or FALSE.
  */
@@ -198,8 +198,8 @@ function coder_upgrade_locate_query_string(&$node) { // NEEDS WORK
  *   The number of records to return from the result set.
  */
 function coder_upgrade_parse_query_string(&$node, /*&$operand*/ $sql, $from = 0, $count = 0) {
-  global $replacement_values_is_array, $replacement_index;
-  $replacement_index = 0;
+  global $_coder_upgrade_replacement_values_is_array, $_coder_upgrade_replacement_index;
+  $_coder_upgrade_replacement_index = 0;
 
   // Create helper objects.
 //  $editor = PGPEditor::getInstance();
@@ -347,7 +347,7 @@ function coder_upgrade_parse_select_query_string($node, $sql, $values, $delimite
  *   List of replacement values passed to db_query().
  */
 function coder_upgrade_parse_insert_query_string($sql, $values) {
-  global $replacement_values_is_array;
+  global $_coder_upgrade_replacement_values_is_array;
 
   $new = array();
   // Look for query with a WHERE clause.
@@ -372,7 +372,7 @@ function coder_upgrade_parse_insert_query_string($sql, $values) {
   $fields = array_combine($fields, $holders);
   cdp($fields);
   $replacement_count = coder_upgrade_count_sql_values($holders);
-  $replacement_values_is_array = count($values) == 1 && ($replacement_count > 1 /*|| count($values) != $replacement_count*/);
+  $_coder_upgrade_replacement_values_is_array = count($values) == 1 && ($replacement_count > 1 /*|| count($values) != $replacement_count*/);
 
   // Build DBTNG syntax string.
   // TODO Values could be literals not placeholders.
@@ -406,7 +406,7 @@ function coder_upgrade_parse_insert_query_string($sql, $values) {
  */
 function coder_upgrade_parse_update_query_string($sql, $values) {
   cdp(__FUNCTION__);
-  global $replacement_values_is_array;
+  global $_coder_upgrade_replacement_values_is_array;
 
   // Regex needs to handle multi-line strings. The parsing and exploding of
   // fields and conditions fails on this.
@@ -445,7 +445,7 @@ function coder_upgrade_parse_update_query_string($sql, $values) {
     clp('ERROR: number of replacement values to db_query does not equal number of items needing replacement.');
     clp($sql);
   }
-  $replacement_values_is_array = count($values) == 1 && ($replacement_count > 1 /*|| count($values) != $replacement_count*/);
+  $_coder_upgrade_replacement_values_is_array = count($values) == 1 && ($replacement_count > 1 /*|| count($values) != $replacement_count*/);
 
   // Build DBTNG syntax string.
   $new[] = "db_update('{$matches[1]}')";
@@ -481,7 +481,7 @@ function coder_upgrade_parse_update_query_string($sql, $values) {
  *   List of replacement values passed to db_query().
  */
 function coder_upgrade_parse_delete_query_string($sql, $values) {
-  global $replacement_values_is_array;
+  global $_coder_upgrade_replacement_values_is_array;
 
   $new = array();
   // Look for query with a WHERE clause.
@@ -509,7 +509,7 @@ function coder_upgrade_parse_delete_query_string($sql, $values) {
     clp('ERROR: number of replacement values to db_query does not equal number of items needing replacement.');
     clp($sql);
   }
-  $replacement_values_is_array = count($values) == 1 && ($replacement_count > 1 /*|| count($values) != $replacement_count*/);
+  $_coder_upgrade_replacement_values_is_array = count($values) == 1 && ($replacement_count > 1 /*|| count($values) != $replacement_count*/);
 
   // Build DBTNG syntax string.
   $new[] = "db_delete('{$matches[1]}')";
@@ -578,11 +578,11 @@ function coder_upgrade_insert_dbtng_statement(&$node, $new) {
  *   The replacement values.
  */
 function coder_upgrade_next_replacement_value(&$values) {
-  global $replacement_values_is_array, $replacement_index;
+  global $_coder_upgrade_replacement_values_is_array, $_coder_upgrade_replacement_index;
 
-  if ($replacement_values_is_array) {
-    $value = $values[0] . "['$replacement_index']";
-    $replacement_index++;
+  if ($_coder_upgrade_replacement_values_is_array) {
+    $value = $values[0] . "['$_coder_upgrade_replacement_index']";
+    $_coder_upgrade_replacement_index++;
   }
   else {
     $value = array_shift($values);
